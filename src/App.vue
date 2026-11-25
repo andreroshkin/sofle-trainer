@@ -5,12 +5,20 @@ import { useTrainer } from './trainer'
 import { effectiveKey } from './domain/hints'
 import { keyLabel } from './domain/keycodes'
 import { keyAt, maxFileSize } from './domain/vial'
+import type { Mode } from './domain/practice'
 
 const trainer = useTrainer()
 const fileInput = ref<HTMLInputElement>()
 const touchInput = ref<HTMLInputElement>()
+const typeArea = ref<HTMLElement>()
 const importError = ref('')
 const isImporting = ref(false)
+const narrow = window.matchMedia('(max-width: 650px)')
+const compact = ref(narrow.matches)
+const boardOverride = ref<boolean | null>(null)
+const boardVisible = computed(() => boardOverride.value ?? !compact.value)
+const currentLesson = computed(() => trainer.availableLessons.find(lesson => lesson.id === trainer.mode))
+const reviewTitle = computed(() => trainer.reviewText ? 'Повторение' : currentLesson.value?.title ?? 'Упражнение')
 const keyboardTitle = computed(() => trainer.layer === 0 ? 'Базовый' : `Слой ${trainer.layer}`)
 const hintText = computed(() => {
   if (trainer.done) return 'Упражнение завершено'
@@ -30,6 +38,14 @@ const timeLabel = computed(() => {
   const seconds = Math.floor(trainer.elapsed / 1000)
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 })
+const dateFormat = new Intl.DateTimeFormat('ru', { dateStyle: 'short', timeStyle: 'short' })
+const formatChar = (char: string) => char === ' ' ? 'Пробел' : char
+const formatSpeed = (wpm: number, elapsed: number) => elapsed >= 1000 ? `${wpm} слов/мин` : '— слов/мин'
+
+function updateViewport(event: MediaQueryListEvent) {
+  compact.value = event.matches
+  boardOverride.value = null
+}
 
 function onKey(event: KeyboardEvent) {
   if (event.isComposing || event.defaultPrevented || event.ctrlKey || event.metaKey ||
@@ -58,13 +74,21 @@ function touchType(event: Event) {
   input.value = ''
 }
 
-function resumeTyping(event: MouseEvent) {
-  if (event.detail > 0) (event.currentTarget as HTMLElement).blur()
+function resumeTyping() {
+  typeArea.value?.focus({ preventScroll: true })
 }
 
-function focusExercise(event: MouseEvent) {
+function focusExercise() {
   if (window.matchMedia('(pointer: coarse)').matches) touchInput.value?.focus()
-  else (event.currentTarget as HTMLElement).focus()
+  else resumeTyping()
+}
+
+function startLesson(mode: Mode) {
+  trainer.setMode(mode)
+  trainer.reset()
+  trainer.manualLayer = null
+  resumeTyping()
+  typeArea.value?.scrollIntoView({ block: 'nearest' })
 }
 
 async function importFile(event: Event) {
@@ -78,6 +102,7 @@ async function importFile(event: Event) {
     if (!/\.vil$/i.test(file.name)) throw new Error('Выберите файл с расширением .vil.')
     if (file.size > maxFileSize) throw new Error('Размер файла .vil превышает 1 МБ.')
     trainer.importMap(await file.text(), file.name)
+    resumeTyping()
   } catch (error) {
     importError.value = error instanceof Error ? error.message : 'Не удалось прочитать файл.'
   } finally {
@@ -88,10 +113,12 @@ async function importFile(event: Event) {
 let ticker: ReturnType<typeof setInterval>
 onMounted(() => {
   window.addEventListener('keydown', onKey)
+  narrow.addEventListener('change', updateViewport)
   ticker = setInterval(trainer.tick, 250)
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey)
+  narrow.removeEventListener('change', updateViewport)
   clearInterval(ticker)
 })
 </script>
@@ -103,7 +130,7 @@ onUnmounted(() => {
         <span class="brand-icon" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
         <span>Split Keyboard Trainer</span>
       </div>
-      <button type="button" class="button import" :disabled="isImporting" @click="fileInput?.click(); resumeTyping($event)">
+      <button type="button" class="button import" :disabled="isImporting" @click="fileInput?.click()">
         <span aria-hidden="true">↥</span>{{ isImporting ? 'Чтение файла…' : 'Импорт .vil' }}
       </button>
       <input ref="fileInput" class="visually-hidden" aria-label="Файл Vial" type="file" accept=".vil" tabindex="-1" @change="importFile">
@@ -113,18 +140,22 @@ onUnmounted(() => {
   <main class="shell">
     <div class="intro">
       <div>
-        <div class="device"><i aria-hidden="true"></i>{{ trainer.map.geometry.name }}</div>
         <h1>Тренировка печати</h1>
-        <p>Практикуй набор на своей раздельной клавиатуре.</p>
+        <p class="active-map">
+          <span>{{ trainer.map.geometry.name }}</span>
+          <span class="active-map-name" :title="trainer.filename">{{ trainer.filename }}</span>
+          <button v-if="trainer.imported" type="button" class="text-button accent" :disabled="isImporting"
+            @click="trainer.restoreBase(); importError = ''; resumeTyping()">Вернуть базу</button>
+        </p>
       </div>
       <div class="controls">
         <div class="segmented" aria-label="Упражнение" role="group">
-          <button type="button" :aria-pressed="trainer.mode === 'text'" @click="trainer.setMode('text'); resumeTyping($event)">Текст</button>
-          <button type="button" :aria-pressed="trainer.mode === 'symbols'" @click="trainer.setMode('symbols'); resumeTyping($event)">Символы</button>
+          <button type="button" :aria-pressed="!trainer.reviewText && trainer.mode === 'text'" @click="trainer.setMode('text'); resumeTyping()">Текст</button>
+          <button type="button" :aria-pressed="!trainer.reviewText && trainer.mode === 'symbols'" @click="trainer.setMode('symbols'); resumeTyping()">Символы</button>
         </div>
         <div class="segmented languages" aria-label="Язык упражнения" role="group">
-          <button type="button" aria-label="Русский" :aria-pressed="trainer.language === 'ru'" @click="trainer.setLanguage('ru'); resumeTyping($event)">RU</button>
-          <button type="button" aria-label="Английский" :aria-pressed="trainer.language === 'en'" @click="trainer.setLanguage('en'); resumeTyping($event)">EN</button>
+          <button type="button" aria-label="Русский" :aria-pressed="trainer.language === 'ru'" @click="trainer.setLanguage('ru'); resumeTyping()">RU</button>
+          <button type="button" aria-label="Английский" :aria-pressed="trainer.language === 'en'" @click="trainer.setLanguage('en'); resumeTyping()">EN</button>
         </div>
       </div>
     </div>
@@ -134,19 +165,23 @@ onUnmounted(() => {
 
     <section class="training card" aria-labelledby="exercise-title">
       <div class="training-top">
-        <h2 id="exercise-title">Упражнение</h2>
+        <h2 id="exercise-title">{{ reviewTitle }}</h2>
         <div class="metrics">
           <div><span data-testid="wpm">{{ trainer.wpm }}</span> <small>слов/мин</small></div>
           <div><span data-testid="accuracy">{{ trainer.accuracy }}%</span> <small>точность</small></div>
           <div class="time" aria-label="Время">{{ timeLabel }}</div>
         </div>
       </div>
-      <div tabindex="0" role="group" aria-label="Область набора" class="type-area"
+      <div ref="typeArea" tabindex="0" role="group" aria-label="Область набора" class="type-area"
         :class="{ wrong: trainer.mistake }" @click="focusExercise">
         <p class="exercise-copy" :lang="trainer.language"><span v-for="part in exerciseWords" :key="part.start" class="word"><span
           v-for="(char, index) in part.word" :key="index"
           :class="{ completed: part.start + index < trainer.cursor, current: part.start + index === trainer.cursor }"
         >{{ char }}</span></span></p>
+      </div>
+      <div v-if="!trainer.done" class="next-key">
+        <span>{{ trainer.hint?.layer && trainer.held.length ? 'Удерживай и нажми' : 'Следующая клавиша' }}</span>
+        <strong data-testid="hint">{{ hintText }}</strong>
       </div>
       <label class="touch-entry">
         Набор с экранной клавиатуры
@@ -159,16 +194,31 @@ onUnmounted(() => {
       </div>
       <div class="training-bottom">
         <span v-if="trainer.done" class="done" role="status">✓ Упражнение завершено</span>
-        <span v-else-if="trainer.mistake" class="typing-error">
-          Введено «{{ trainer.mistake === ' ' ? 'пробел' : trainer.mistake }}». Попробуй ещё раз.
+        <span v-else-if="trainer.mistake" class="typing-error" aria-live="polite">
+          Ошибка. Введено «{{ formatChar(trainer.mistake) }}», нужно «{{ formatChar(trainer.target) }}».
         </span>
         <span v-else-if="trainer.cursor === 0">Начни печатать. Используй системную раскладку {{ trainer.language === 'ru' ? 'RU (ЙЦУКЕН)' : 'EN (US)' }}.</span>
         <span v-else data-testid="character-count">{{ trainer.cursor }} / {{ trainer.exercise.length }} символов</span>
         <div class="exercise-actions">
-          <button type="button" class="text-button" @click="trainer.reset(); resumeTyping($event)">
+          <button type="button" class="text-button" @click="trainer.reset(); resumeTyping()">
             <span aria-hidden="true">↻</span> Сначала
           </button>
-          <button type="button" class="text-button accent" @click="trainer.nextExercise(); resumeTyping($event)">Следующее</button>
+          <button v-if="!trainer.done" type="button" class="text-button accent" @click="trainer.nextExercise(); resumeTyping()">Следующее</button>
+        </div>
+      </div>
+      <div v-if="trainer.result" class="result">
+        <div>
+          <h3>Результат</h3>
+          <p>{{ trainer.result.accuracy }}% точность · {{ formatSpeed(trainer.result.wpm, trainer.result.elapsed) }} · {{ timeLabel }}</p>
+          <p v-if="trainer.missed.length" class="misses">
+            Ошибки <span v-for="key in trainer.missed" :key="key.char"><kbd>{{ formatChar(key.char) }}</kbd> × {{ key.errors }}</span>
+          </p>
+          <p v-else>Все символы набраны с первой попытки.</p>
+        </div>
+        <div class="exercise-actions">
+          <button v-if="trainer.missed.length" type="button" class="button primary"
+            @click="trainer.repeatKeys(trainer.missed); resumeTyping()">Повторить ошибки</button>
+          <button type="button" class="button" @click="trainer.nextExercise(); resumeTyping()">Следующее упражнение</button>
         </div>
       </div>
     </section>
@@ -177,35 +227,65 @@ onUnmounted(() => {
       <div class="keyboard-top">
         <div>
           <h2 id="keyboard-title">Клавиатура</h2>
-          <p class="file-line">
-            <span :title="trainer.filename">{{ trainer.filename }}</span>
-            <span aria-hidden="true">·</span>{{ trainer.manualLayer === null ? 'Автоподсказка' : keyboardTitle }}
-            <button v-if="trainer.imported" type="button" class="text-button accent" :disabled="isImporting" @click="trainer.restoreBase(); importError = ''; resumeTyping($event)">
-              Вернуть базу
-            </button>
-          </p>
+          <p class="file-line">{{ trainer.manualLayer === null ? 'Схема следует за упражнением' : `Просмотр вручную · ${keyboardTitle}` }}</p>
         </div>
-        <div class="layers" role="group" aria-label="Слои Vial">
-          <button type="button" class="layer-chip" :aria-pressed="trainer.manualLayer === null" @click="trainer.manualLayer = null; resumeTyping($event)">Авто</button>
+        <button type="button" class="button" :aria-expanded="boardVisible" aria-controls="keyboard-preview keyboard-layers"
+          @click="boardOverride = !boardVisible">{{ boardVisible ? 'Свернуть схему' : 'Показать схему' }}</button>
+        <div v-show="boardVisible" id="keyboard-layers" class="layers" role="group" aria-label="Слои Vial">
+          <button type="button" class="layer-chip" :aria-pressed="trainer.manualLayer === null" @click="trainer.manualLayer = null">Авто</button>
           <button v-for="(_, index) in trainer.map.layers" :key="index" type="button" class="layer-chip"
             :class="{ live: trainer.layer === index }" :aria-label="`Слой ${index}`"
-            :aria-pressed="trainer.manualLayer === index" @click="trainer.manualLayer = index; resumeTyping($event)">
+            :aria-pressed="trainer.manualLayer === index" @click="trainer.manualLayer = index">
             {{ index }}
           </button>
         </div>
       </div>
-
-      <Keyboard />
-
-      <div class="board-footer">
-        <div class="next-key"><span>Подсказка</span><strong data-testid="hint">{{ hintText }}</strong></div>
-        <div class="legend"><span><i class="legend-target"></i> Следующая</span><span><i class="legend-mod"></i> Удерживать</span><span>▽ Прозрачная</span><span>— Без действия</span></div>
+      <div v-show="boardVisible" id="keyboard-preview">
+        <Keyboard />
+        <div class="board-footer">
+          <div class="legend"><span><i class="legend-target"></i> Нажать</span><span><i class="legend-mod"></i> Удерживать</span><span>▽ Прозрачная</span><span>— Без действия</span></div>
+        </div>
       </div>
     </section>
 
+    <details class="card extra">
+      <summary>Короткие уроки</summary>
+      <ul class="lesson-list">
+        <li v-for="lesson in trainer.availableLessons" :key="lesson.id">
+          <button type="button" class="button" @click="startLesson(lesson.id)">{{ lesson.title }}</button>
+          <span>{{ lesson.description }}</span>
+        </li>
+        <li><button type="button" class="button" @click="startLesson('symbols')">Символы и сочетания</button>
+          <span>Закрепи знаки препинания, Shift и переходы между слоями.</span></li>
+      </ul>
+    </details>
+
+    <details class="card extra">
+      <summary>История тренировок <span>{{ trainer.recent.length || '' }}</span></summary>
+      <p v-if="trainer.historyWarning" class="history-warning">{{ trainer.historyWarning }}</p>
+      <p v-if="!trainer.recent.length">Здесь появятся результаты для текущей раскладки и языка.</p>
+      <template v-else>
+        <div v-if="trainer.suggested.length" class="recommendation">
+          <p>Чаще всего в последних тренировках вызывали ошибки <kbd v-for="key in trainer.suggested" :key="key.char"
+              :title="`Ошибок ${key.errors} из ${key.attempts} попыток`">{{ formatChar(key.char) }}</kbd></p>
+          <button type="button" class="button" @click="trainer.repeatKeys(trainer.suggested); resumeTyping(); typeArea?.scrollIntoView({ block: 'nearest' })">Потренировать</button>
+        </div>
+        <ol class="history-list">
+          <li v-for="entry in trainer.recent" :key="entry.id">
+            <time :datetime="new Date(entry.finishedAt).toISOString()">{{ dateFormat.format(entry.finishedAt) }}</time>
+            <span>{{ entry.accuracy }}% точность · {{ formatSpeed(entry.wpm, entry.elapsed) }}</span>
+          </li>
+        </ol>
+      </template>
+    </details>
+
+    <details class="card extra">
+      <summary>Как импортировать раскладку Vial</summary>
+      <p>В Vial сохрани раскладку через <span lang="en">File → Save current layout</span>. Здесь нажми «Импорт .vil» и выбери файл Sofle 66. Раскладка сохраняется в этом браузере.</p>
+    </details>
+
     <footer class="footer">
       <span>Аппаратная Fn может быть невидима браузеру. Слои на экране служат подсказкой.</span>
-      <span class="local"><i aria-hidden="true"></i>Импорт хранится в браузере</span>
     </footer>
   </main>
 </template>
