@@ -47,6 +47,8 @@ export const useTrainer = defineStore('trainer', () => {
   const history = shallowRef<Result[]>([])
   const result = shallowRef<Result>()
   const reviewText = ref('')
+  const customText = ref('')
+  const customActive = ref(false)
   let releaseTimer: ReturnType<typeof setTimeout> | undefined
 
   const profile = computed(() => profileFor(map.value))
@@ -56,13 +58,15 @@ export const useTrainer = defineStore('trainer', () => {
   const availableLessons = computed(() => lessons.filter(lesson => lessonText(lesson.id, map.value, language.value, 0)))
   const exercise = computed(() => {
     if (reviewText.value) return reviewText.value
+    if (customActive.value) return customText.value
     const index = exerciseIndex.value
     if (mode.value === 'text') return passages[language.value][index % passages[language.value].length]
     if (mode.value === 'symbols') return symbols[language.value][index % symbols[language.value].length]
     return lessonText(mode.value, map.value, language.value, index) || lessonText(mode.value, map.value, language.value, 0)
   })
-  const target = computed(() => exercise.value[cursor.value] ?? '')
-  const done = computed(() => cursor.value === exercise.value.length)
+  const chars = computed(() => Array.from(exercise.value))
+  const target = computed(() => chars.value[cursor.value] ?? '')
+  const done = computed(() => cursor.value === chars.value.length)
   const hint = computed(() => target.value ? findHint(map.value, target.value, language.value, null) : undefined)
   const layer = computed(() => manualLayer.value ?? hint.value?.layer ?? 0)
   const held = computed(() => hint.value && hint.value.layer !== 0 ? fnKeys(map.value, hint.value.layer) : [])
@@ -70,7 +74,7 @@ export const useTrainer = defineStore('trainer', () => {
   const wpm = computed(() => elapsed.value >= 1000 ? Math.round(cursor.value * 12000 / elapsed.value) : 0)
   const accuracy = computed(() => cursor.value + errors.value
     ? Math.round(cursor.value / (cursor.value + errors.value) * 100) : 100)
-  const progress = computed(() => Math.round(cursor.value / exercise.value.length * 100))
+  const progress = computed(() => Math.round(cursor.value / chars.value.length * 100))
 
   function reset() {
     cursor.value = 0
@@ -100,15 +104,24 @@ export const useTrainer = defineStore('trainer', () => {
   }
 
   function setMode(value: Mode) {
-    if (mode.value === value && !reviewText.value) return
+    if (mode.value === value && !reviewText.value && !customActive.value) return
     mode.value = value
+    customActive.value = false
     exerciseIndex.value = 0
     reviewText.value = ''
     reset()
   }
 
+  function startCustom(text: string) {
+    customText.value = text
+    customActive.value = true
+    reviewText.value = ''
+    manualLayer.value = null
+    reset()
+  }
+
   function nextExercise() {
-    exerciseIndex.value++
+    if (!customActive.value) exerciseIndex.value++
     reviewText.value = ''
     reset()
   }
@@ -146,7 +159,8 @@ export const useTrainer = defineStore('trainer', () => {
       if (done.value) {
         const entry: Result = {
           id: globalThis.crypto?.randomUUID?.() ?? `${now}-${Math.random()}`,
-          profile: profile.value, language: language.value, mode: reviewText.value ? 'review' : mode.value,
+          profile: profile.value, language: language.value,
+          mode: reviewText.value ? 'review' : customActive.value ? 'custom' : mode.value,
           finishedAt: now, accuracy: accuracy.value, wpm: wpm.value, elapsed: elapsed.value,
           keys: [...keyStats.values()],
         }
@@ -221,8 +235,8 @@ export const useTrainer = defineStore('trainer', () => {
 
   return {
     map, filename, imported, storageWarning, historyWarning, language, mode, cursor, errors, mistake,
-    exercise, target, done, hint, layer, manualLayer, held, elapsed, wpm, accuracy, progress, pressed,
+    exercise, length: computed(() => chars.value.length), target, done, hint, layer, manualLayer, held, elapsed, wpm, accuracy, progress, pressed,
     recent, suggested, result, reviewText, availableLessons, missed: computed(() => mistakes(result.value?.keys ?? [])),
-    reset, setLanguage, setMode, nextExercise, repeatKeys, tick, flash, type, revert, importMap, restoreBase,
+    customText, customActive, startCustom, reset, setLanguage, setMode, nextExercise, repeatKeys, tick, flash, type, revert, importMap, restoreBase,
   }
 })

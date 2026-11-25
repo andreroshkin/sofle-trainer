@@ -4,6 +4,12 @@ import type { Keymap } from './vial'
 
 export type Lesson = 'letters' | 'thumbs' | 'digits' | 'layer'
 export type Mode = 'text' | 'symbols' | Lesson
+export const customTextLimit = 1200
+
+export function normalizeCustomText(source: string) {
+  return source.normalize('NFC').replace(/\r\n?/g, '\n').replace(/\t/g, '    ')
+    .replace(/[\u2028\u2029]/g, '\n').replace(/\p{Zs}/gu, ' ')
+}
 
 export const lessons: readonly { id: Lesson; title: string; description: string }[] = [
   { id: 'letters', title: 'Буквы', description: 'Короткие последовательности из основного ряда.' },
@@ -40,7 +46,7 @@ export interface Result {
   id: string
   profile: string
   language: Language
-  mode: Mode | 'review'
+  mode: Mode | 'custom' | 'review'
   finishedAt: number
   accuracy: number
   wpm: number
@@ -73,7 +79,7 @@ function isResult(value: unknown): value is Result {
   const run = value as Partial<Result>
   return typeof run.id === 'string' && typeof run.profile === 'string' &&
     (run.language === 'ru' || run.language === 'en') &&
-    (run.mode === 'text' || run.mode === 'symbols' || run.mode === 'review' || lessons.some(lesson => lesson.id === run.mode)) &&
+    (run.mode === 'text' || run.mode === 'symbols' || run.mode === 'custom' || run.mode === 'review' || lessons.some(lesson => lesson.id === run.mode)) &&
     typeof run.finishedAt === 'number' && run.finishedAt >= 0 && run.finishedAt <= 8.64e15 &&
     [run.accuracy, run.wpm, run.elapsed].every(value => Number.isFinite(value) && value! >= 0) &&
     Array.isArray(run.keys) && run.keys.every(isKeyStats)

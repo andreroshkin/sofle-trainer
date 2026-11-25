@@ -68,6 +68,7 @@ export function momentaryLayer(raw: Keycode): number | null {
 
 export function character(raw: Keycode, language: Language, shift = false): string | null {
   const tap = tapKey(raw)
+  if (tap.code === 'KC_ENTER' && !tap.shifted && !shift) return '\n'
   const id = tap.code.slice(3)
   const shifted = tap.shifted || shift
   const symbol = /^[A-Z0-9]$/.test(id) ? id.toLowerCase() : Object.hasOwn(punctuation, id) ? punctuation[id] : ''

@@ -1,16 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import Keyboard from './components/Keyboard.vue'
 import { useTrainer } from './trainer'
 import { effectiveKey } from './domain/hints'
 import { keyLabel } from './domain/keycodes'
 import { keyAt, maxFileSize } from './domain/vial'
-import type { Mode } from './domain/practice'
+import { customTextLimit, normalizeCustomText, type Mode } from './domain/practice'
 
 const trainer = useTrainer()
 const fileInput = ref<HTMLInputElement>()
-const touchInput = ref<HTMLInputElement>()
+const touchInput = ref<HTMLTextAreaElement>()
 const typeArea = ref<HTMLElement>()
+const customDialog = ref<HTMLDialogElement>()
+const customDraft = ref('')
+const customError = ref('')
+const customLength = computed(() => Array.from(normalizeCustomText(customDraft.value)).length)
 const importError = ref('')
 const isImporting = ref(false)
 const narrow = window.matchMedia('(max-width: 650px)')
@@ -18,7 +22,11 @@ const compact = ref(narrow.matches)
 const boardOverride = ref<boolean | null>(null)
 const boardVisible = computed(() => boardOverride.value ?? !compact.value)
 const currentLesson = computed(() => trainer.availableLessons.find(lesson => lesson.id === trainer.mode))
-const reviewTitle = computed(() => trainer.reviewText ? 'Повторение' : currentLesson.value?.title ?? 'Упражнение')
+const reviewTitle = computed(() => {
+  if (trainer.reviewText) return 'Повторение'
+  if (trainer.customActive) return 'Свой текст'
+  return currentLesson.value?.title ?? 'Упражнение'
+})
 const keyboardTitle = computed(() => trainer.layer === 0 ? 'Базовый' : `Слой ${trainer.layer}`)
 const hintText = computed(() => {
   if (trainer.done) return 'Упражнение завершено'
@@ -30,16 +38,21 @@ const hintText = computed(() => {
   if (hint.layer && !trainer.held.length) return `Слой ${hint.layer} · ${hint.shift ? 'Shift + ' : ''}${keyLabel(effectiveKey(trainer.map, hint.layer, hint.key), trainer.language)}`
   return [...fn, ...(hint.shift ? ['Shift'] : []), key].join(' + ')
 })
-const exerciseWords = computed(() => trainer.exercise.match(/\S+\s*|\s+/g)?.map((word, index, words) => ({
-  word,
-  start: words.slice(0, index).reduce((length, value) => length + value.length, 0),
-})) ?? [])
+const exerciseWords = computed(() => {
+  let start = 0
+  return (trainer.exercise.match(/[^ \n]+ *| +|\n/g) ?? []).map(word => {
+    const chars = Array.from(word)
+    const part = { chars, start }
+    start += chars.length
+    return part
+  })
+})
 const timeLabel = computed(() => {
   const seconds = Math.floor(trainer.elapsed / 1000)
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 })
 const dateFormat = new Intl.DateTimeFormat('ru', { dateStyle: 'short', timeStyle: 'short' })
-const formatChar = (char: string) => char === ' ' ? 'Пробел' : char
+const formatChar = (char: string) => char === ' ' ? 'Пробел' : char === '\n' ? 'Enter' : char
 const formatSpeed = (wpm: number, elapsed: number) => elapsed >= 1000 ? `${wpm} слов/мин` : '— слов/мин'
 
 function updateViewport(event: MediaQueryListEvent) {
@@ -53,24 +66,25 @@ function onKey(event: KeyboardEvent) {
   const element = event.target
   if (element instanceof HTMLElement && (element.isContentEditable ||
       element.closest('input, select, textarea, a, button, summary'))) return
+  const enterIsInput = event.key === 'Enter' && !trainer.done && (trainer.customActive || trainer.target === '\n')
   if (event.repeat) {
-    if (event.key === ' ' || event.key === 'Backspace') event.preventDefault()
+    if (event.key === ' ' || event.key === 'Backspace' || enterIsInput) event.preventDefault()
     return
   }
   trainer.flash(event.code)
   if (event.key === 'Backspace') {
     event.preventDefault()
     trainer.revert()
-  } else if (Array.from(event.key).length === 1 && !trainer.done) {
+  } else if (enterIsInput || (Array.from(event.key).length === 1 && !trainer.done)) {
     event.preventDefault()
-    trainer.type(event.key)
+    trainer.type(enterIsInput ? '\n' : event.key)
   }
 }
 
 function touchType(event: Event) {
-  const input = event.target as HTMLInputElement
+  const input = event.target as HTMLTextAreaElement
   if ((event as InputEvent).isComposing) return
-  for (const character of input.value) trainer.type(character)
+  for (const character of input.value.normalize('NFC')) trainer.type(character)
   input.value = ''
 }
 
@@ -82,6 +96,36 @@ function focusExercise() {
   if (window.matchMedia('(pointer: coarse)').matches) touchInput.value?.focus()
   else resumeTyping()
 }
+
+function openCustomText() {
+  customDraft.value = trainer.customText
+  customError.value = ''
+  customDialog.value?.showModal()
+}
+
+async function submitCustomText() {
+  const text = normalizeCustomText(customDraft.value)
+  if (!text.trim()) customError.value = 'Вставь текст, чтобы начать тренировку.'
+  else if (customLength.value > customTextLimit) customError.value = 'Сократи текст до 1200 символов.'
+  else if (/[\p{Cc}\p{Cf}]/u.test(text.replaceAll('\n', ''))) customError.value = 'Удали невидимые управляющие символы и попробуй снова.'
+  else {
+    trainer.startCustom(text)
+    customDialog.value?.close()
+    await nextTick()
+    focusExercise()
+  }
+}
+
+watch([() => trainer.cursor, () => trainer.exercise], () => {
+  const area = typeArea.value
+  if (!area) return
+  if (trainer.cursor === 0) area.scrollTop = 0
+  const current = area.querySelector('.current')?.getBoundingClientRect()
+  if (!current) return
+  const bounds = area.getBoundingClientRect()
+  if (current.bottom > bounds.bottom - 8) area.scrollTop += current.bottom - bounds.bottom + 8
+  else if (current.top < bounds.top + 8) area.scrollTop += current.top - bounds.top - 8
+}, { flush: 'post' })
 
 function startLesson(mode: Mode) {
   trainer.setMode(mode)
@@ -150,8 +194,10 @@ onUnmounted(() => {
       </div>
       <div class="controls">
         <div class="segmented" aria-label="Упражнение" role="group">
-          <button type="button" :aria-pressed="!trainer.reviewText && trainer.mode === 'text'" @click="trainer.setMode('text'); resumeTyping()">Текст</button>
-          <button type="button" :aria-pressed="!trainer.reviewText && trainer.mode === 'symbols'" @click="trainer.setMode('symbols'); resumeTyping()">Символы</button>
+          <button type="button" :aria-pressed="!trainer.customActive && !trainer.reviewText && trainer.mode === 'text'" @click="trainer.setMode('text'); resumeTyping()">Текст</button>
+          <button type="button" :aria-pressed="!trainer.customActive && !trainer.reviewText && trainer.mode === 'symbols'" @click="trainer.setMode('symbols'); resumeTyping()">Символы</button>
+          <button type="button" aria-haspopup="dialog" :class="{ selected: trainer.customActive && !trainer.reviewText }"
+            @click="openCustomText">Свой текст</button>
         </div>
         <div class="segmented languages" aria-label="Язык упражнения" role="group">
           <button type="button" aria-label="Русский" :aria-pressed="trainer.language === 'ru'" @click="trainer.setLanguage('ru'); resumeTyping()">RU</button>
@@ -159,6 +205,22 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <dialog ref="customDialog" class="custom-dialog" aria-labelledby="custom-title">
+      <form @submit.prevent="submitCustomText">
+        <h2 id="custom-title">Свой текст</h2>
+        <label for="custom-text">Текст или код для тренировки</label>
+        <textarea id="custom-text" v-model="customDraft" rows="6" autofocus spellcheck="false"
+          aria-describedby="custom-help custom-count" :aria-invalid="Boolean(customError)" @input="customError = ''"></textarea>
+        <p id="custom-help">Переносы вводятся через Enter. Табуляция превращается в четыре пробела.</p>
+        <p id="custom-count">{{ customLength }} / {{ customTextLimit }} символов</p>
+        <p v-if="customError" class="error" role="alert">{{ customError }}</p>
+        <div class="exercise-actions">
+          <button type="button" class="button" @click="customDialog?.close()">Отмена</button>
+          <button type="submit" class="button primary">Начать тренировку</button>
+        </div>
+      </form>
+    </dialog>
 
     <p v-if="importError" class="message error" role="alert">{{ importError }}</p>
     <p v-if="trainer.storageWarning" class="message" role="status">{{ trainer.storageWarning }}</p>
@@ -174,9 +236,10 @@ onUnmounted(() => {
       </div>
       <div ref="typeArea" tabindex="0" role="group" aria-label="Область набора" class="type-area"
         :class="{ wrong: trainer.mistake }" @click="focusExercise">
-        <p class="exercise-copy" :lang="trainer.language"><span v-for="part in exerciseWords" :key="part.start" class="word"><span
-          v-for="(char, index) in part.word" :key="index"
-          :class="{ completed: part.start + index < trainer.cursor, current: part.start + index === trainer.cursor }"
+        <p class="exercise-copy" :class="{ 'custom-copy': trainer.customActive || trainer.exercise.includes('\n') }"
+          :lang="trainer.language"><span v-for="part in exerciseWords" :key="part.start" class="word"><span
+          v-for="(char, index) in part.chars" :key="index"
+          :class="{ completed: part.start + index < trainer.cursor, current: part.start + index === trainer.cursor, 'line-break': char === '\n' }"
         >{{ char }}</span></span></p>
       </div>
       <div v-if="!trainer.done" class="next-key">
@@ -185,8 +248,8 @@ onUnmounted(() => {
       </div>
       <label class="touch-entry">
         Набор с экранной клавиатуры
-        <input ref="touchInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
-          :disabled="trainer.done" @input="touchType" @compositionend="touchType">
+        <textarea ref="touchInput" rows="1" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+          :disabled="trainer.done" @input="touchType" @compositionend="touchType"></textarea>
       </label>
       <div class="progress-track" role="progressbar" aria-label="Прогресс упражнения"
         :aria-valuenow="trainer.progress" aria-valuemin="0" aria-valuemax="100">
@@ -198,12 +261,14 @@ onUnmounted(() => {
           Ошибка. Введено «{{ formatChar(trainer.mistake) }}», нужно «{{ formatChar(trainer.target) }}».
         </span>
         <span v-else-if="trainer.cursor === 0">Начни печатать. Используй системную раскладку {{ trainer.language === 'ru' ? 'RU (ЙЦУКЕН)' : 'EN (US)' }}.</span>
-        <span v-else data-testid="character-count">{{ trainer.cursor }} / {{ trainer.exercise.length }} символов</span>
+        <span v-else data-testid="character-count">{{ trainer.cursor }} / {{ trainer.length }} символов</span>
         <div class="exercise-actions">
           <button type="button" class="text-button" @click="trainer.reset(); resumeTyping()">
             <span aria-hidden="true">↻</span> Сначала
           </button>
-          <button v-if="!trainer.done" type="button" class="text-button accent" @click="trainer.nextExercise(); resumeTyping()">Следующее</button>
+          <button v-if="!trainer.done && !trainer.customActive" type="button" class="text-button accent" @click="trainer.nextExercise(); resumeTyping()">Следующее</button>
+          <button v-if="!trainer.done && trainer.customActive && trainer.reviewText" type="button" class="text-button accent"
+            @click="trainer.nextExercise(); resumeTyping()">К своему тексту</button>
         </div>
       </div>
       <div v-if="trainer.result" class="result">
@@ -218,7 +283,10 @@ onUnmounted(() => {
         <div class="exercise-actions">
           <button v-if="trainer.missed.length" type="button" class="button primary"
             @click="trainer.repeatKeys(trainer.missed); resumeTyping()">Повторить ошибки</button>
-          <button type="button" class="button" @click="trainer.nextExercise(); resumeTyping()">Следующее упражнение</button>
+          <button v-if="trainer.customActive && !trainer.reviewText" type="button" class="button" @click="openCustomText">Изменить текст</button>
+          <button v-else type="button" class="button" @click="trainer.nextExercise(); resumeTyping()">
+            {{ trainer.customActive ? 'К своему тексту' : 'Следующее упражнение' }}
+          </button>
         </div>
       </div>
     </section>
@@ -273,7 +341,7 @@ onUnmounted(() => {
         <ol class="history-list">
           <li v-for="entry in trainer.recent" :key="entry.id">
             <time :datetime="new Date(entry.finishedAt).toISOString()">{{ dateFormat.format(entry.finishedAt) }}</time>
-            <span>{{ entry.accuracy }}% точность · {{ formatSpeed(entry.wpm, entry.elapsed) }}</span>
+            <span>{{ entry.mode === 'custom' ? 'Свой текст · ' : '' }}{{ entry.accuracy }}% точность · {{ formatSpeed(entry.wpm, entry.elapsed) }}</span>
           </li>
         </ol>
       </template>
