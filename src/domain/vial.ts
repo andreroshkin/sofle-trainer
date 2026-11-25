@@ -42,7 +42,7 @@ export function parseVial(source: string): Keymap {
   })
 
   if (!geometry) {
-    throw new Error('Геометрия файла не поддерживается. Сейчас доступен профиль Sofle 66 из base.vil (матрица 5 × 16).')
+    throw new Error('Геометрия файла не поддерживается. Выбери экспорт Vial для Sofle 66 с матрицей 5 × 16 и 64 позициями, как у base.vil.')
   }
   return { geometry, layers }
 }

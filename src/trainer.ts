@@ -4,10 +4,11 @@ import baseVial from './assets/base.vil?raw'
 import { eventPosition, findHint, fnKeys } from './domain/hints'
 import type { Language } from './domain/keycodes'
 import { parseVial } from './domain/vial'
+import { lessonText, lessons, mistakes, profileFor, readHistory, recordResult, suggestedKeys,
+  type KeyStats, type Mode, type Result } from './domain/practice'
 
 const storageKey = 'split-keyboard-trainer.vial.v1'
 const base = parseVial(baseVial)
-export type Mode = 'text' | 'symbols'
 
 const passages = {
   ru: [
@@ -31,6 +32,7 @@ export const useTrainer = defineStore('trainer', () => {
   const filename = ref('base.vil')
   const imported = ref(false)
   const storageWarning = ref('')
+  const historyWarning = ref('')
   const language = ref<Language>('ru')
   const mode = ref<Mode>('text')
   const exerciseIndex = ref(0)
@@ -41,12 +43,27 @@ export const useTrainer = defineStore('trainer', () => {
   const startedAt = ref<number | null>(null)
   const clock = ref(0)
   const pressed = ref<string>()
+  const keyStats = new Map<string, KeyStats>()
+  const history = shallowRef<Result[]>([])
+  const result = shallowRef<Result>()
+  const reviewText = ref('')
   let releaseTimer: ReturnType<typeof setTimeout> | undefined
 
-  const exercise = computed(() => (mode.value === 'text' ? passages : symbols)[language.value][exerciseIndex.value])
+  const profile = computed(() => profileFor(map.value))
+  const recent = computed(() => history.value.filter(entry => entry.profile === profile.value && entry.language === language.value))
+  const suggested = computed(() => suggestedKeys(recent.value)
+    .filter(key => findHint(map.value, key.char, language.value, null)))
+  const availableLessons = computed(() => lessons.filter(lesson => lessonText(lesson.id, map.value, language.value, 0)))
+  const exercise = computed(() => {
+    if (reviewText.value) return reviewText.value
+    const index = exerciseIndex.value
+    if (mode.value === 'text') return passages[language.value][index % passages[language.value].length]
+    if (mode.value === 'symbols') return symbols[language.value][index % symbols[language.value].length]
+    return lessonText(mode.value, map.value, language.value, index) || lessonText(mode.value, map.value, language.value, 0)
+  })
   const target = computed(() => exercise.value[cursor.value] ?? '')
   const done = computed(() => cursor.value === exercise.value.length)
-  const hint = computed(() => target.value ? findHint(map.value, target.value, language.value, manualLayer.value) : undefined)
+  const hint = computed(() => target.value ? findHint(map.value, target.value, language.value, null) : undefined)
   const layer = computed(() => manualLayer.value ?? hint.value?.layer ?? 0)
   const held = computed(() => hint.value && hint.value.layer !== 0 ? fnKeys(map.value, hint.value.layer) : [])
   const elapsed = computed(() => startedAt.value === null ? 0 : Math.max(0, clock.value - startedAt.value))
@@ -62,25 +79,45 @@ export const useTrainer = defineStore('trainer', () => {
     startedAt.value = null
     clock.value = 0
     pressed.value = undefined
+    keyStats.clear()
+    result.value = undefined
     clearTimeout(releaseTimer)
+  }
+
+  function restartAvailableExercise() {
+    if (mode.value !== 'text' && mode.value !== 'symbols' && !availableLessons.value.some(item => item.id === mode.value)) {
+      mode.value = 'text'
+    }
+    exerciseIndex.value = 0
+    reviewText.value = ''
+    reset()
   }
 
   function setLanguage(value: Language) {
     if (language.value === value) return
     language.value = value
-    exerciseIndex.value = 0
-    reset()
+    restartAvailableExercise()
   }
 
   function setMode(value: Mode) {
-    if (mode.value === value) return
+    if (mode.value === value && !reviewText.value) return
     mode.value = value
     exerciseIndex.value = 0
+    reviewText.value = ''
     reset()
   }
 
   function nextExercise() {
-    exerciseIndex.value = (exerciseIndex.value + 1) % passages[language.value].length
+    exerciseIndex.value++
+    reviewText.value = ''
+    reset()
+  }
+
+  function repeatKeys(keys: readonly KeyStats[]) {
+    const sample = keys.slice(0, 5).map(key => key.char).join('')
+    if (!sample) return
+    reviewText.value = sample.repeat(Math.ceil(15 / sample.length))
+    manualLayer.value = null
     reset()
   }
 
@@ -99,11 +136,32 @@ export const useTrainer = defineStore('trainer', () => {
     const now = Date.now()
     startedAt.value ??= now
     clock.value = now
-    if (value === target.value) {
+    const char = target.value
+    const stats = keyStats.get(char) ?? { char, attempts: 0, errors: 0 }
+    stats.attempts++
+    keyStats.set(char, stats)
+    if (value === char) {
       cursor.value++
       mistake.value = ''
+      if (done.value) {
+        const entry: Result = {
+          id: globalThis.crypto?.randomUUID?.() ?? `${now}-${Math.random()}`,
+          profile: profile.value, language: language.value, mode: reviewText.value ? 'review' : mode.value,
+          finishedAt: now, accuracy: accuracy.value, wpm: wpm.value, elapsed: elapsed.value,
+          keys: [...keyStats.values()],
+        }
+        result.value = entry
+        try {
+          history.value = recordResult(entry, history.value)
+          historyWarning.value = ''
+        } catch {
+          history.value = [entry, ...history.value]
+          historyWarning.value = 'Браузер не сохранил историю. Этот результат доступен до закрытия страницы.'
+        }
+      }
     } else {
       errors.value++
+      stats.errors++
       mistake.value = value
     }
   }
@@ -118,7 +176,7 @@ export const useTrainer = defineStore('trainer', () => {
     filename.value = name
     imported.value = true
     manualLayer.value = null
-    reset()
+    restartAvailableExercise()
   }
 
   function importMap(source: string, name: string) {
@@ -137,7 +195,7 @@ export const useTrainer = defineStore('trainer', () => {
     imported.value = false
     storageWarning.value = ''
     manualLayer.value = null
-    reset()
+    restartAvailableExercise()
     try {
       localStorage.removeItem(storageKey)
     } catch {
@@ -155,10 +213,16 @@ export const useTrainer = defineStore('trainer', () => {
   } catch {
     storageWarning.value = 'Сохранённая раскладка недоступна. Открыта рабочая база Sofle 66.'
   }
+  try {
+    history.value = readHistory()
+  } catch {
+    historyWarning.value = 'История тренировок недоступна.'
+  }
 
   return {
-    map, filename, imported, storageWarning, language, mode, cursor, errors, mistake,
+    map, filename, imported, storageWarning, historyWarning, language, mode, cursor, errors, mistake,
     exercise, target, done, hint, layer, manualLayer, held, elapsed, wpm, accuracy, progress, pressed,
-    reset, setLanguage, setMode, nextExercise, tick, flash, type, revert, importMap, restoreBase,
+    recent, suggested, result, reviewText, availableLessons, missed: computed(() => mistakes(result.value?.keys ?? [])),
+    reset, setLanguage, setMode, nextExercise, repeatKeys, tick, flash, type, revert, importMap, restoreBase,
   }
 })
