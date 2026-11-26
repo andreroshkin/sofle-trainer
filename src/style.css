@@ -24,10 +24,10 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 body { margin: 0; min-width: 280px; }
-button, input, textarea { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button { color: inherit; cursor: pointer; }
 button:disabled { cursor: wait; opacity: .55; }
-button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible, .type-area:focus-visible {
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, .type-area:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
@@ -73,7 +73,10 @@ h1 { font-size: clamp(1.8rem, 4.8vw, 2.55rem); line-height: 1.1; letter-spacing:
 .segmented button[aria-pressed=true], .segmented button.selected, .layer-chip[aria-pressed=true] {
   background: var(--accent-tint); border-color: var(--accent-border); color: var(--accent);
 }
-.languages button { font-family: var(--mono); }
+.layout-select {
+  min-height: 42px; max-width: 100%; padding: 5px 8px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--panel); color: var(--text); font-size: .875rem; font-weight: 700; cursor: pointer;
+}
 
 .card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
 .training { padding: 14px 20px 10px; }

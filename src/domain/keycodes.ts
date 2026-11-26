@@ -1,6 +1,19 @@
 import type { Keycode } from './vial'
 
 export type Language = 'ru' | 'en'
+export type TypingLayout = Language | 'dvorak' | 'colemak'
+
+export const typingLayouts: Record<TypingLayout, string> = {
+  ru: 'ЙЦУКЕН (RU)', en: 'QWERTY (US)', dvorak: 'Dvorak (US)', colemak: 'Colemak',
+}
+
+export function isTypingLayout(value: unknown): value is TypingLayout {
+  return typeof value === 'string' && Object.hasOwn(typingLayouts, value)
+}
+
+export function layoutLanguage(layout: TypingLayout): Language {
+  return layout === 'ru' ? 'ru' : 'en'
+}
 
 const aliases: Record<string, string> = {
   ESC: 'ESCAPE', BSPC: 'BSPACE', ENT: 'ENTER', SPC: 'SPACE', CAPS: 'CAPSLOCK',
@@ -36,10 +49,14 @@ export function normalize(code: Keycode): string {
   return Object.hasOwn(aliases, id) ? `KC_${aliases[id]}` : code
 }
 
-const englishKeys = 'qwertyuiop[]asdfghjkl;\'zxcvbnm,./`\\'
-const russianKeys = 'йцукенгшщзхъфывапролджэячсмитьбю.ё\\'
-const englishShift = 'QWERTYUIOP{}ASDFGHJKL:"ZXCVBNM<>?~|'
-const russianShift = 'ЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮ,Ё/'
+const englishKeys = "qwertyuiop[]asdfghjkl;'zxcvbnm,./`\\-="
+// Output for the same USB keycodes, in QWERTY key order, with and without Shift.
+const layoutSymbols: Record<TypingLayout, { base: string; shift: string }> = {
+  ru: { base: 'йцукенгшщзхъфывапролджэячсмитьбю.ё\\-=', shift: 'ЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮ,Ё/_+' },
+  en: { base: englishKeys, shift: 'QWERTYUIOP{}ASDFGHJKL:"ZXCVBNM<>?~|_+' },
+  dvorak: { base: "',.pyfgcrl/=aoeuidhtns-;qjkxbmwvz`\\[]", shift: '"<>PYFGCRL?+AOEUIDHTNS_:QJKXBMWVZ~|{}' },
+  colemak: { base: "qwfpgjluy;[]arstdhneio'zxcvbkm,./`\\-=", shift: 'QWFPGJLUY:{}ARSTDHNEIO"ZXCVBKM<>?~|_+' },
+}
 const punctuation: Record<string, string> = {
   GRAVE: '`', MINUS: '-', EQUAL: '=', LBRACKET: '[', RBRACKET: ']', BSLASH: '\\',
   SCOLON: ';', QUOTE: "'", COMMA: ',', DOT: '.', SLASH: '/', SPACE: ' ',
@@ -66,7 +83,7 @@ export function momentaryLayer(raw: Keycode): number | null {
   return match ? Number(match[1]) : null
 }
 
-export function character(raw: Keycode, language: Language, shift = false): string | null {
+export function character(raw: Keycode, layout: TypingLayout, shift = false): string | null {
   const tap = tapKey(raw)
   if (tap.code === 'KC_ENTER' && !tap.shifted && !shift) return '\n'
   const id = tap.code.slice(3)
@@ -74,14 +91,8 @@ export function character(raw: Keycode, language: Language, shift = false): stri
   const symbol = /^[A-Z0-9]$/.test(id) ? id.toLowerCase() : Object.hasOwn(punctuation, id) ? punctuation[id] : ''
   if (!tap.code.startsWith('KC_') || !symbol) return null
   const index = englishKeys.indexOf(symbol)
-  if (index >= 0) {
-    return language === 'ru'
-      ? (shifted ? russianShift : russianKeys)[index]
-      : (shifted ? englishShift : englishKeys)[index]
-  }
-  if (shifted && digits.includes(symbol)) return (language === 'ru' ? '!"№;%:?*()' : '!@#$%^&*()')[digits.indexOf(symbol)]
-  if (shifted && symbol === '-') return '_'
-  if (shifted && symbol === '=') return '+'
+  if (index >= 0) return layoutSymbols[layout][shifted ? 'shift' : 'base'][index]
+  if (shifted && digits.includes(symbol)) return (layout === 'ru' ? '!"№;%:?*()' : '!@#$%^&*()')[digits.indexOf(symbol)]
   return symbol
 }
 
@@ -110,13 +121,13 @@ export function browserCode(raw: Keycode): string | undefined {
   return Object.hasOwn(browserCodes, id) ? browserCodes[id] : undefined
 }
 
-export function keyLabel(raw: Keycode, language: Language): string {
+export function keyLabel(raw: Keycode, layout: TypingLayout): string {
   const code = normalize(raw)
   const layer = momentaryLayer(raw)
   if (layer !== null) return `Fn ${layer}`
   const id = code.slice(3)
   if (code.startsWith('KC_') && Object.hasOwn(specialLabels, id)) return specialLabels[id]
-  const symbol = character(raw, language)
+  const symbol = character(raw, layout)
   if (symbol) return symbol === ' ' ? '␣' : symbol.toUpperCase()
   return code.startsWith('KC_') ? id : code
 }

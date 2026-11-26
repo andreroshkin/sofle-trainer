@@ -21,14 +21,14 @@ const keys = computed(() => trainer.map.geometry.positions.map(position => {
   const isHeld = showHint && trainer.held.some(key => key.id === position.id)
   const isShift = showHint && trainer.hint?.shift && ['KC_LSHIFT', 'KC_RSHIFT'].includes(normalize(effective))
   const isTarget = showHint && trainer.hint?.key.id === position.id
-  const label = isHeld ? `Fn ${trainer.hint?.layer}` : keyLabel(raw, trainer.language)
-  const physicalLabel = isTarget && trainer.layer !== 0 ? keyLabel(keyAt(trainer.map, 0, position), trainer.language) : ''
+  const label = isHeld ? `Fn ${trainer.hint?.layer}` : keyLabel(raw, trainer.typingLayout)
+  const physicalLabel = isTarget && trainer.layer !== 0 ? keyLabel(keyAt(trainer.map, 0, position), trainer.typingLayout) : ''
   return {
     ...position,
     code: normalize(raw),
     label,
     physicalLabel: physicalLabel === label ? '' : physicalLabel,
-    inherited: isTransparent && effective !== raw ? keyLabel(effective, trainer.language) : '',
+    inherited: isTransparent && effective !== raw ? keyLabel(effective, trainer.typingLayout) : '',
     layerKey: momentaryLayer(raw),
     isTransparent, isDisabled,
     isModifier: isHeld || isShift,

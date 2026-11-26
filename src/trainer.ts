@@ -2,12 +2,13 @@ import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
 import baseVial from './assets/base.vil?raw'
 import { eventPosition, findHint, fnKeys } from './domain/hints'
-import type { Language } from './domain/keycodes'
+import { isTypingLayout, layoutLanguage, type TypingLayout } from './domain/keycodes'
 import { parseVial } from './domain/vial'
-import { lessonText, lessons, mistakes, profileFor, readHistory, recordResult, suggestedKeys,
+import { lessonText, lessons, mistakes, profileFor, readHistory, recordResult, resultLayout, suggestedKeys,
   type KeyStats, type Mode, type Result } from './domain/practice'
 
 const storageKey = 'split-keyboard-trainer.vial.v1'
+const layoutStorageKey = 'split-keyboard-trainer.typing-layout.v1'
 const base = parseVial(baseVial)
 
 const passages = {
@@ -33,7 +34,8 @@ export const useTrainer = defineStore('trainer', () => {
   const imported = ref(false)
   const storageWarning = ref('')
   const historyWarning = ref('')
-  const language = ref<Language>('ru')
+  const typingLayout = ref<TypingLayout>('ru')
+  const language = computed(() => layoutLanguage(typingLayout.value))
   const mode = ref<Mode>('text')
   const exerciseIndex = ref(0)
   const manualLayer = ref<number | null>(null)
@@ -52,22 +54,22 @@ export const useTrainer = defineStore('trainer', () => {
   let releaseTimer: ReturnType<typeof setTimeout> | undefined
 
   const profile = computed(() => profileFor(map.value))
-  const recent = computed(() => history.value.filter(entry => entry.profile === profile.value && entry.language === language.value))
+  const recent = computed(() => history.value.filter(entry => entry.profile === profile.value && resultLayout(entry) === typingLayout.value))
   const suggested = computed(() => suggestedKeys(recent.value)
-    .filter(key => findHint(map.value, key.char, language.value, null)))
-  const availableLessons = computed(() => lessons.filter(lesson => lessonText(lesson.id, map.value, language.value, 0)))
+    .filter(key => findHint(map.value, key.char, typingLayout.value, null)))
+  const availableLessons = computed(() => lessons.filter(lesson => lessonText(lesson.id, map.value, typingLayout.value, 0)))
   const exercise = computed(() => {
     if (reviewText.value) return reviewText.value
     if (customActive.value) return customText.value
     const index = exerciseIndex.value
     if (mode.value === 'text') return passages[language.value][index % passages[language.value].length]
     if (mode.value === 'symbols') return symbols[language.value][index % symbols[language.value].length]
-    return lessonText(mode.value, map.value, language.value, index) || lessonText(mode.value, map.value, language.value, 0)
+    return lessonText(mode.value, map.value, typingLayout.value, index) || lessonText(mode.value, map.value, typingLayout.value, 0)
   })
   const chars = computed(() => Array.from(exercise.value))
   const target = computed(() => chars.value[cursor.value] ?? '')
   const done = computed(() => cursor.value === chars.value.length)
-  const hint = computed(() => target.value ? findHint(map.value, target.value, language.value, null) : undefined)
+  const hint = computed(() => target.value ? findHint(map.value, target.value, typingLayout.value, null) : undefined)
   const layer = computed(() => manualLayer.value ?? hint.value?.layer ?? 0)
   const held = computed(() => hint.value && hint.value.layer !== 0 ? fnKeys(map.value, hint.value.layer) : [])
   const elapsed = computed(() => startedAt.value === null ? 0 : Math.max(0, clock.value - startedAt.value))
@@ -97,10 +99,15 @@ export const useTrainer = defineStore('trainer', () => {
     reset()
   }
 
-  function setLanguage(value: Language) {
-    if (language.value === value) return
-    language.value = value
+  function setTypingLayout(value: TypingLayout) {
+    if (typingLayout.value === value) return
+    typingLayout.value = value
     restartAvailableExercise()
+    try {
+      localStorage.setItem(layoutStorageKey, value)
+    } catch {
+      // The selected layout is still available for this visit.
+    }
   }
 
   function setMode(value: Mode) {
@@ -159,7 +166,7 @@ export const useTrainer = defineStore('trainer', () => {
       if (done.value) {
         const entry: Result = {
           id: globalThis.crypto?.randomUUID?.() ?? `${now}-${Math.random()}`,
-          profile: profile.value, language: language.value,
+          profile: profile.value, language: language.value, typingLayout: typingLayout.value,
           mode: reviewText.value ? 'review' : customActive.value ? 'custom' : mode.value,
           finishedAt: now, accuracy: accuracy.value, wpm: wpm.value, elapsed: elapsed.value,
           keys: [...keyStats.values()],
@@ -218,6 +225,12 @@ export const useTrainer = defineStore('trainer', () => {
   }
 
   try {
+    const saved = localStorage.getItem(layoutStorageKey)
+    if (isTypingLayout(saved)) typingLayout.value = saved
+  } catch {
+    // Keep the default layout if browser storage is disabled.
+  }
+  try {
     const saved = localStorage.getItem(storageKey)
     if (saved) {
       const value = JSON.parse(saved)
@@ -234,9 +247,9 @@ export const useTrainer = defineStore('trainer', () => {
   }
 
   return {
-    map, filename, imported, storageWarning, historyWarning, language, mode, cursor, errors, mistake,
+    map, filename, imported, storageWarning, historyWarning, language, typingLayout, mode, cursor, errors, mistake,
     exercise, length: computed(() => chars.value.length), target, done, hint, layer, manualLayer, held, elapsed, wpm, accuracy, progress, pressed,
     recent, suggested, result, reviewText, availableLessons, missed: computed(() => mistakes(result.value?.keys ?? [])),
-    customText, customActive, startCustom, reset, setLanguage, setMode, nextExercise, repeatKeys, tick, flash, type, revert, importMap, restoreBase,
+    customText, customActive, startCustom, reset, setTypingLayout, setMode, nextExercise, repeatKeys, tick, flash, type, revert, importMap, restoreBase,
   }
 })

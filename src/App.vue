@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import Keyboard from './components/Keyboard.vue'
 import { useTrainer } from './trainer'
 import { hintShortcut } from './domain/hints'
+import { isTypingLayout, typingLayouts } from './domain/keycodes'
 import { maxFileSize } from './domain/vial'
 import { customTextLimit, normalizeCustomText, reviewMistakes, type Mode } from './domain/practice'
 
@@ -28,9 +29,9 @@ const reviewTitle = computed(() => {
   return currentLesson.value?.title ?? 'Упражнение'
 })
 const keyboardTitle = computed(() => trainer.layer === 0 ? 'Базовый' : `Слой ${trainer.layer}`)
-const hintText = computed(() => trainer.hint ? hintShortcut(trainer.map, trainer.hint, trainer.language)
+const hintText = computed(() => trainer.hint ? hintShortcut(trainer.map, trainer.hint, trainer.typingLayout)
   : 'Для этого символа нет подсказки в выбранной раскладке')
-const mistakeReview = computed(() => reviewMistakes(trainer.map, trainer.missed, trainer.language))
+const mistakeReview = computed(() => reviewMistakes(trainer.map, trainer.missed, trainer.typingLayout))
 const showMistakeMap = computed(() => trainer.manualLayer === null && mistakeReview.value.positions.length > 0)
 const mistakeCounts = computed(() => showMistakeMap.value
   ? new Map(mistakeReview.value.positions.map(position => [position.id, position.errors])) : undefined)
@@ -86,6 +87,14 @@ function touchType(event: Event) {
 
 function resumeTyping() {
   typeArea.value?.focus({ preventScroll: true })
+}
+
+function changeTypingLayout(event: Event) {
+  const layout = (event.currentTarget as HTMLSelectElement).value
+  if (!isTypingLayout(layout)) return
+  trainer.setTypingLayout(layout)
+  trainer.manualLayer = null
+  resumeTyping()
 }
 
 function focusExercise() {
@@ -210,10 +219,9 @@ onUnmounted(() => {
           <button type="button" aria-haspopup="dialog" :class="{ selected: trainer.customActive && !trainer.reviewText }"
             @click="openCustomText">Свой текст</button>
         </div>
-        <div class="segmented languages" aria-label="Язык упражнения" role="group">
-          <button type="button" aria-label="Русский" :aria-pressed="trainer.language === 'ru'" @click="trainer.setLanguage('ru'); resumeTyping()">RU</button>
-          <button type="button" aria-label="Английский" :aria-pressed="trainer.language === 'en'" @click="trainer.setLanguage('en'); resumeTyping()">EN</button>
-        </div>
+        <select class="layout-select" aria-label="Системная раскладка" :value="trainer.typingLayout" @change="changeTypingLayout">
+          <option v-for="(name, id) in typingLayouts" :key="id" :value="id">{{ name }}</option>
+        </select>
       </div>
     </div>
 
@@ -271,7 +279,7 @@ onUnmounted(() => {
         <span v-else-if="trainer.mistake" class="typing-error" aria-live="polite">
           Ошибка. Введено «{{ formatChar(trainer.mistake) }}», нужно «{{ formatChar(trainer.target) }}».
         </span>
-        <span v-else-if="trainer.cursor === 0">Начни печатать. Используй системную раскладку {{ trainer.language === 'ru' ? 'RU (ЙЦУКЕН)' : 'EN (US)' }}.</span>
+        <span v-else-if="trainer.cursor === 0">Начни печатать. В системе должна быть выбрана {{ typingLayouts[trainer.typingLayout] }}.</span>
         <span v-else data-testid="character-count">{{ trainer.cursor }} / {{ trainer.length }} символов</span>
         <div class="exercise-actions">
           <button type="button" class="text-button" @click="trainer.reset(); resumeTyping()">
@@ -361,7 +369,7 @@ onUnmounted(() => {
     <details class="card extra">
       <summary>История тренировок <span>{{ trainer.recent.length || '' }}</span></summary>
       <p v-if="trainer.historyWarning" class="history-warning">{{ trainer.historyWarning }}</p>
-      <p v-if="!trainer.recent.length">Здесь появятся результаты для текущей раскладки и языка.</p>
+      <p v-if="!trainer.recent.length">Здесь появятся результаты для {{ typingLayouts[trainer.typingLayout] }} с текущим файлом Vial.</p>
       <template v-else>
         <div v-if="trainer.suggested.length" class="recommendation">
           <p>Чаще всего в последних тренировках вызывали ошибки <kbd v-for="key in trainer.suggested" :key="key.char"
