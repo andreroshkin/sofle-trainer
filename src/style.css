@@ -160,6 +160,12 @@ h2, h3 { font-size: 1.065rem; font-weight: 700; letter-spacing: -.025em; }
 .keycap.target { border-color: var(--accent); background: var(--accent); color: var(--recessed); box-shadow: inset 0 -4px #b69411; }
 .keycap.target small { color: var(--recessed); }
 .keycap.pressed { outline: 2px solid var(--text); z-index: 1; }
+.keycap.mistake-key {
+  border-color: var(--error-text); color: var(--text); background: var(--error-tint);
+  background: color-mix(in srgb, var(--error) var(--mistake-strength), var(--error-tint));
+  box-shadow: inset 0 -3px var(--error-tint);
+}
+.keycap.mistake-key small { color: var(--error-text); }
 .board-footer { border-top: 1px solid var(--line); padding-top: 10px; flex-wrap: wrap; }
 .next-key { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 8px; margin-top: 7px; font-size: .8125rem; color: var(--muted); }
 .next-key strong { border-radius: 5px; padding: 4px 7px; color: var(--accent); background: var(--accent-tint); font: 700 .8125rem var(--mono); }
@@ -176,6 +182,14 @@ h2, h3 { font-size: 1.065rem; font-weight: 700; letter-spacing: -.025em; }
 .result p, .extra p, .lesson-list span { color: var(--muted); font-size: .875rem; line-height: 1.5; }
 .result p { margin-top: 5px; }
 .result .misses { display: flex; gap: 5px 9px; flex-wrap: wrap; }
+.result .result-note { flex-basis: 100%; margin-top: 0; }
+.mistake-review { width: 100%; }
+.mistake-list, .mistake-symbols { list-style: none; padding: 0; }
+.mistake-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 8px; margin: 8px 0 0; }
+.mistake-list > li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; color: var(--muted); font-size: .8125rem; }
+.mistake-list strong { color: var(--text); }
+.mistake-symbols { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 5px 0 0; }
+.mistake-symbols li { display: flex; align-items: center; gap: 4px; }
 kbd { display: inline-block; margin-inline: 2px; border: 1px solid var(--line); border-radius: 4px; background: var(--raised); color: var(--text); padding: 1px 4px; font-family: var(--mono); }
 .primary { background: var(--accent); color: var(--recessed); border-color: var(--accent); }
 .primary:hover { background: #edc53e; }

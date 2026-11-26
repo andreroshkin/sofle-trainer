@@ -2,15 +2,15 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import Keyboard from './components/Keyboard.vue'
 import { useTrainer } from './trainer'
-import { effectiveKey } from './domain/hints'
-import { keyLabel } from './domain/keycodes'
-import { keyAt, maxFileSize } from './domain/vial'
-import { customTextLimit, normalizeCustomText, type Mode } from './domain/practice'
+import { hintShortcut } from './domain/hints'
+import { maxFileSize } from './domain/vial'
+import { customTextLimit, normalizeCustomText, reviewMistakes, type Mode } from './domain/practice'
 
 const trainer = useTrainer()
 const fileInput = ref<HTMLInputElement>()
 const touchInput = ref<HTMLTextAreaElement>()
 const typeArea = ref<HTMLElement>()
+const keyboardHeading = ref<HTMLElement>()
 const customDialog = ref<HTMLDialogElement>()
 const customDraft = ref('')
 const customError = ref('')
@@ -28,16 +28,12 @@ const reviewTitle = computed(() => {
   return currentLesson.value?.title ?? 'Упражнение'
 })
 const keyboardTitle = computed(() => trainer.layer === 0 ? 'Базовый' : `Слой ${trainer.layer}`)
-const hintText = computed(() => {
-  if (trainer.done) return 'Упражнение завершено'
-  const hint = trainer.hint
-  if (!hint) return 'Для этого символа нет подсказки в выбранной раскладке'
-  const raw = keyAt(trainer.map, 0, hint.key)
-  const key = keyLabel(hint.layer === 0 ? effectiveKey(trainer.map, 0, hint.key) : raw, trainer.language)
-  const fn = hint.layer && trainer.held.length ? [`Fn ${hint.layer}`] : []
-  if (hint.layer && !trainer.held.length) return `Слой ${hint.layer} · ${hint.shift ? 'Shift + ' : ''}${keyLabel(effectiveKey(trainer.map, hint.layer, hint.key), trainer.language)}`
-  return [...fn, ...(hint.shift ? ['Shift'] : []), key].join(' + ')
-})
+const hintText = computed(() => trainer.hint ? hintShortcut(trainer.map, trainer.hint, trainer.language)
+  : 'Для этого символа нет подсказки в выбранной раскладке')
+const mistakeReview = computed(() => reviewMistakes(trainer.map, trainer.missed, trainer.language))
+const showMistakeMap = computed(() => trainer.manualLayer === null && mistakeReview.value.positions.length > 0)
+const mistakeCounts = computed(() => showMistakeMap.value
+  ? new Map(mistakeReview.value.positions.map(position => [position.id, position.errors])) : undefined)
 const exerciseWords = computed(() => {
   let start = 0
   return (trainer.exercise.match(/[^ \n]+ *| +|\n/g) ?? []).map(word => {
@@ -95,6 +91,21 @@ function resumeTyping() {
 function focusExercise() {
   if (window.matchMedia('(pointer: coarse)').matches) touchInput.value?.focus()
   else resumeTyping()
+}
+
+async function revealMistakeMap() {
+  boardOverride.value = true
+  trainer.manualLayer = null
+  await nextTick()
+  keyboardHeading.value?.focus({ preventScroll: true })
+  keyboardHeading.value?.scrollIntoView({ block: 'start' })
+}
+
+async function practiceMistakes() {
+  const { mapped } = mistakeReview.value
+  trainer.repeatKeys(mapped.length ? mapped : trainer.missed)
+  await nextTick()
+  focusExercise()
 }
 
 function openCustomText() {
@@ -282,20 +293,26 @@ onUnmounted(() => {
         </div>
         <div class="exercise-actions">
           <button v-if="trainer.missed.length" type="button" class="button primary"
-            @click="trainer.repeatKeys(trainer.missed); resumeTyping()">Повторить ошибки</button>
+            @click="practiceMistakes">{{ mistakeReview.mapped.length ? 'Потренировать эти клавиши' : 'Повторить ошибки' }}</button>
+          <button v-if="mistakeReview.positions.length" type="button" class="button" @click="revealMistakeMap">Показать ошибки на схеме</button>
           <button v-if="trainer.customActive && !trainer.reviewText" type="button" class="button" @click="openCustomText">Изменить текст</button>
           <button v-else type="button" class="button" @click="trainer.nextExercise(); resumeTyping()">
             {{ trainer.customActive ? 'К своему тексту' : 'Следующее упражнение' }}
           </button>
         </div>
+        <p v-if="mistakeReview.mapped.length > 5" class="result-note">Тренировка возьмёт пять символов с наибольшим числом ошибок.</p>
+        <p v-if="mistakeReview.unmapped.length" class="result-note">Без подсказки в этой раскладке
+          <kbd v-for="key in mistakeReview.unmapped" :key="key.char">{{ formatChar(key.char) }}</kbd>
+        </p>
       </div>
     </section>
 
     <section class="keyboard card" aria-labelledby="keyboard-title">
       <div class="keyboard-top">
         <div>
-          <h2 id="keyboard-title">Клавиатура</h2>
-          <p class="file-line">{{ trainer.manualLayer === null ? 'Схема следует за упражнением' : `Просмотр вручную · ${keyboardTitle}` }}</p>
+          <h2 id="keyboard-title" ref="keyboardHeading" tabindex="-1">Клавиатура</h2>
+          <p class="file-line" v-if="showMistakeMap">Ошибки за упражнение · базовый слой</p>
+          <p class="file-line" v-else>{{ trainer.manualLayer === null ? 'Схема следует за упражнением' : `Просмотр вручную · ${keyboardTitle}` }}</p>
         </div>
         <button type="button" class="button" :aria-expanded="boardVisible" aria-controls="keyboard-preview keyboard-layers"
           @click="boardOverride = !boardVisible">{{ boardVisible ? 'Свернуть схему' : 'Показать схему' }}</button>
@@ -309,9 +326,22 @@ onUnmounted(() => {
         </div>
       </div>
       <div v-show="boardVisible" id="keyboard-preview">
-        <Keyboard />
+        <Keyboard :mistake-counts="mistakeCounts" />
         <div class="board-footer">
-          <div class="legend"><span><i class="legend-target"></i> Нажать</span><span><i class="legend-mod"></i> Удерживать</span><span>▽ Прозрачная</span><span>— Без действия</span></div>
+          <div v-if="showMistakeMap" class="mistake-review">
+            <h3>Какие клавиши потренировать</h3>
+            <ul class="mistake-list">
+              <li v-for="position in mistakeReview.positions" :key="position.id">
+                <div><strong>{{ position.label }}</strong> · {{ position.hand === 'left' ? 'Левая рука' : 'Правая рука' }} · Ошибок {{ position.errors }}</div>
+                <ul class="mistake-symbols">
+                  <li v-for="symbol in position.symbols" :key="symbol.char">
+                    <kbd>{{ formatChar(symbol.char) }}</kbd><span>{{ symbol.shortcut }} · × {{ symbol.errors }}</span>
+                  </li>
+                </ul>
+              </li>
+            </ul>
+          </div>
+          <div v-else class="legend"><span><i class="legend-target"></i> Нажать</span><span><i class="legend-mod"></i> Удерживать</span><span>▽ Прозрачная</span><span>— Без действия</span></div>
         </div>
       </div>
     </section>

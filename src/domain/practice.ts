@@ -1,6 +1,6 @@
-import { findHint } from './hints'
-import { normalize, type Language } from './keycodes'
-import type { Keymap } from './vial'
+import { findHint, hintShortcut } from './hints'
+import { keyLabel, normalize, type Language } from './keycodes'
+import { keyAt, type Keymap } from './vial'
 
 export type Lesson = 'letters' | 'thumbs' | 'digits' | 'layer'
 export type Mode = 'text' | 'symbols' | Lesson
@@ -111,6 +111,36 @@ export function recordResult(result: Result, current: Result[]): Result[] {
 
 export function mistakes(keys: readonly KeyStats[]): KeyStats[] {
   return keys.filter(key => key.errors > 0).sort((a, b) => b.errors - a.errors)
+}
+
+interface PositionMistakes {
+  id: string
+  hand: 'left' | 'right'
+  label: string
+  errors: number
+  symbols: { char: string; errors: number; shortcut: string }[]
+}
+
+export function reviewMistakes(map: Keymap, missed: readonly KeyStats[], language: Language) {
+  const positions = new Map<string, PositionMistakes>()
+  const mapped: KeyStats[] = []
+  const unmapped: KeyStats[] = []
+  for (const key of missed) {
+    const hint = findHint(map, key.char, language, null)
+    if (!hint) {
+      unmapped.push(key)
+      continue
+    }
+    const { id, hand } = hint.key
+    const position = positions.get(id) ?? {
+      id, hand, label: keyLabel(keyAt(map, 0, hint.key), language), errors: 0, symbols: [],
+    }
+    position.errors += key.errors
+    position.symbols.push({ char: key.char, errors: key.errors, shortcut: hintShortcut(map, hint, language) })
+    positions.set(id, position)
+    mapped.push(key)
+  }
+  return { positions: [...positions.values()].sort((a, b) => b.errors - a.errors), mapped, unmapped }
 }
 
 export function suggestedKeys(history: readonly Result[]): KeyStats[] {
