@@ -67,6 +67,18 @@ describe('коды клавиш и подсказки', () => {
     expect(eventPosition(map, 1, 'Equal', undefined)?.id).toBe('3-14')
   })
 
+  it('учитывает системную раскладку поверх назначений Vial', () => {
+    expect(character('KC_Q', 'dvorak')).toBe("'")
+    expect(character('KC_Q', 'dvorak', true)).toBe('"')
+    expect(character('KC_PLUS', 'dvorak')).toBe('}')
+    expect(character('KC_LBRACKET', 'dvorak', true)).toBe('?')
+    expect(findHint(map, '{', 'dvorak', null)).toMatchObject({ key: { id: '0-14' }, layer: 1, shift: true })
+    expect(findHint(map, 'o', 'dvorak', null)).toMatchObject({ key: { id: '2-2' }, layer: 0, shift: false })
+    expect(findHint(map, 'r', 'colemak', null)).toMatchObject({ key: { id: '2-2' }, layer: 0, shift: false })
+    expect(character('KC_P', 'colemak', true)).toBe(':')
+    expect(character('LT(1,KC_K)', 'colemak')).toBe('e')
+  })
+
   it('распознаёт QMK-алиасы, базовые числовые коды и tap-коды', () => {
     expect(browserCode('KC_SCLN')).toBe('Semicolon')
     expect(character('LT(1,KC_A)', 'ru')).toBe('ф')

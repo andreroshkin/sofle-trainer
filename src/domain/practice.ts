@@ -1,5 +1,5 @@
 import { findHint, hintShortcut } from './hints'
-import { keyLabel, normalize, type Language } from './keycodes'
+import { isTypingLayout, keyLabel, layoutLanguage, normalize, type Language, type TypingLayout } from './keycodes'
 import { keyAt, type Keymap } from './vial'
 
 export type Lesson = 'letters' | 'thumbs' | 'digits' | 'layer'
@@ -18,21 +18,27 @@ export const lessons: readonly { id: Lesson; title: string; description: string 
   { id: 'layer', title: 'Первый символ через Fn', description: 'Найди клавишу слоя, удерживай её и введи символ.' },
 ]
 
-export function lessonText(mode: Lesson, map: Keymap, language: Language, index: number): string {
+const homeRowPractice: Record<TypingLayout, readonly [string, string]> = {
+  ru: ['фываолдж', 'ваолфыдж'], en: ['asdfjkl', 'dfjkasl'],
+  dvorak: ['aoeuidhtns', 'ueoahdtsni'], colemak: ['arstdhneio', 'tsraenhdoi'],
+}
+
+export function lessonText(mode: Lesson, map: Keymap, layout: TypingLayout, index: number): string {
+  const language = layoutLanguage(layout)
   const candidates = {
-    letters: language === 'ru' ? ['фываолдж', 'ваолфыдж'] : ['asdfjkl', 'dfjkasl'],
+    letters: homeRowPractice[layout],
     thumbs: language === 'ru' ? ['а (о) [в]', 'о [а] (л)'] : ['a [j] f', 'j [a] l'],
     digits: ['1234567890', '9078563412'],
     layer: language === 'ru' ? ['ё-=+_[]1234567890', '-=+_ё[]0987654321'] : ['`-=+_[]1234567890', '-=+_`[]0987654321'],
   }[mode]
   const reachable = Array.from(candidates[index % candidates.length]).filter(char => {
-    const hint = findHint(map, char, language, null)
+    const hint = findHint(map, char, layout, null)
     return hint && (mode !== 'layer' || hint.layer > 0)
   })
   if (mode === 'layer') return reachable[0] ?? ''
   if (!reachable.some(char => char !== ' ')) return ''
   const sample = reachable.join('').trim()
-  const separator = findHint(map, ' ', language, null) ? ' ' : ''
+  const separator = findHint(map, ' ', layout, null) ? ' ' : ''
   return [sample, sample].join(separator)
 }
 
@@ -46,6 +52,7 @@ export interface Result {
   id: string
   profile: string
   language: Language
+  typingLayout?: TypingLayout
   mode: Mode | 'custom' | 'review'
   finishedAt: number
   accuracy: number
@@ -79,10 +86,15 @@ function isResult(value: unknown): value is Result {
   const run = value as Partial<Result>
   return typeof run.id === 'string' && typeof run.profile === 'string' &&
     (run.language === 'ru' || run.language === 'en') &&
+    (run.typingLayout === undefined || (isTypingLayout(run.typingLayout) && layoutLanguage(run.typingLayout) === run.language)) &&
     (run.mode === 'text' || run.mode === 'symbols' || run.mode === 'custom' || run.mode === 'review' || lessons.some(lesson => lesson.id === run.mode)) &&
     typeof run.finishedAt === 'number' && run.finishedAt >= 0 && run.finishedAt <= 8.64e15 &&
     [run.accuracy, run.wpm, run.elapsed].every(value => Number.isFinite(value) && value! >= 0) &&
     Array.isArray(run.keys) && run.keys.every(isKeyStats)
+}
+
+export function resultLayout(result: Result): TypingLayout {
+  return result.typingLayout ?? result.language
 }
 
 export function readHistory(): Result[] {
@@ -104,7 +116,7 @@ export function recordResult(result: Result, current: Result[]): Result[] {
   const history = [...byId.values()].sort((a, b) => b.finishedAt - a.finishedAt)
   let sameProfile = 0
   const recent = history.filter(entry =>
-    entry.profile !== result.profile || entry.language !== result.language || ++sameProfile <= 30).slice(0, 300)
+    entry.profile !== result.profile || resultLayout(entry) !== resultLayout(result) || ++sameProfile <= 30).slice(0, 300)
   localStorage.setItem(historyKey, JSON.stringify(recent))
   return recent
 }
@@ -121,22 +133,22 @@ interface PositionMistakes {
   symbols: { char: string; errors: number; shortcut: string }[]
 }
 
-export function reviewMistakes(map: Keymap, missed: readonly KeyStats[], language: Language) {
+export function reviewMistakes(map: Keymap, missed: readonly KeyStats[], layout: TypingLayout) {
   const positions = new Map<string, PositionMistakes>()
   const mapped: KeyStats[] = []
   const unmapped: KeyStats[] = []
   for (const key of missed) {
-    const hint = findHint(map, key.char, language, null)
+    const hint = findHint(map, key.char, layout, null)
     if (!hint) {
       unmapped.push(key)
       continue
     }
     const { id, hand } = hint.key
     const position = positions.get(id) ?? {
-      id, hand, label: keyLabel(keyAt(map, 0, hint.key), language), errors: 0, symbols: [],
+      id, hand, label: keyLabel(keyAt(map, 0, hint.key), layout), errors: 0, symbols: [],
     }
     position.errors += key.errors
-    position.symbols.push({ char: key.char, errors: key.errors, shortcut: hintShortcut(map, hint, language) })
+    position.symbols.push({ char: key.char, errors: key.errors, shortcut: hintShortcut(map, hint, layout) })
     positions.set(id, position)
     mapped.push(key)
   }

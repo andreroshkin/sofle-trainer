@@ -1,5 +1,7 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
+
+const layoutSelect = (page: Page) => page.getByRole('combobox', { name: 'Системная раскладка' })
 
 const base = readFileSync(new URL('../src/assets/base.vil', import.meta.url), 'utf8')
 const russianKeys = [
@@ -77,8 +79,8 @@ test('английский набор и интерфейс на узком эк
   await page.getByRole('button', { name: 'Показать схему' }).click()
   await expect(page.locator('.keycap').first()).toBeVisible()
   await page.getByRole('button', { name: 'Свернуть схему' }).click()
-  await page.getByRole('button', { name: 'Английский' }).click()
-  await expect(page.getByRole('button', { name: 'Английский' })).toHaveAttribute('aria-pressed', 'true')
+  await layoutSelect(page).selectOption('en')
+  await expect(layoutSelect(page)).toHaveValue('en')
   await expect(page.locator('.keycap.target')).toHaveText('S')
   await page.getByRole('textbox', { name: 'Набор с экранной клавиатуры' }).fill('smooth')
   await expect(page.getByTestId('character-count')).toContainText('6 /')
@@ -87,10 +89,10 @@ test('английский набор и интерфейс на узком эк
   await page.close()
 })
 
-test('фокус после смены языка и отдельный ручной просмотр слоёв', async ({ page }) => {
+test('фокус после выбора системной раскладки и отдельный ручной просмотр слоёв', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 })
   await page.goto('/')
-  await page.getByRole('button', { name: 'Английский' }).press('Enter')
+  await layoutSelect(page).selectOption('en')
   const area = page.getByRole('group', { name: 'Область набора' })
   await expect(area).toBeFocused()
   await page.keyboard.type('smooth')
@@ -136,9 +138,9 @@ test('урок слоя, повтор ошибок и история по рас
   await history.locator('summary').click()
   await expect(history.locator('li')).toHaveCount(2)
   await expect(history.getByRole('button', { name: 'Потренировать' })).toBeVisible()
-  await page.getByRole('button', { name: 'Английский' }).click()
+  await layoutSelect(page).selectOption('en')
   await expect(history.locator('li')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Русский' }).click()
+  await layoutSelect(page).selectOption('ru')
   await expect(history.locator('li')).toHaveCount(2)
 
   const config = JSON.parse(base)
@@ -152,7 +154,7 @@ test('урок слоя, повтор ошибок и история по рас
 
 test('свой код сохраняет переносы и отступы и использует результат с повтором ошибок', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'Английский' }).press('Enter')
+  await layoutSelect(page).selectOption('en')
   await page.getByRole('button', { name: 'Свой текст' }).press('Enter')
   const dialog = page.getByRole('dialog', { name: 'Свой текст' })
   const editor = dialog.getByRole('textbox', { name: 'Текст или код для тренировки' })
@@ -186,7 +188,7 @@ test('свой код сохраняет переносы и отступы и �
   await expect(dialog).not.toBeVisible()
 
   await page.reload()
-  await page.getByRole('button', { name: 'Английский' }).click()
+  await layoutSelect(page).selectOption('en')
   const history = page.locator('details').filter({ hasText: 'История тренировок' })
   await history.locator('summary').click()
   await expect(history.locator('li')).toContainText('Свой текст')
@@ -215,7 +217,7 @@ test('свой русский текст с Enter на узком экране',
 
 test('ошибки для [ и { отмечаются на одной клавише с отдельными подсказками', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'Английский' }).click()
+  await layoutSelect(page).selectOption('en')
   await page.getByRole('button', { name: 'Свой текст' }).click()
   await page.getByRole('textbox', { name: 'Текст или код для тренировки' }).fill('[{')
   await page.getByRole('button', { name: 'Начать тренировку' }).click()
@@ -248,7 +250,7 @@ test('ошибки для [ и { отмечаются на одной клави
 test('на телефоне можно раскрыть карту ошибок, символ без подсказки не получает позицию', async ({ browser, baseURL }) => {
   const page = await browser.newPage({ baseURL, viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true })
   await page.goto('/')
-  await page.getByRole('button', { name: 'Английский' }).tap()
+  await layoutSelect(page).selectOption('en')
   await page.getByRole('button', { name: 'Свой текст' }).tap()
   await page.getByRole('textbox', { name: 'Текст или код для тренировки' }).fill('[ё')
   await page.getByRole('button', { name: 'Начать тренировку' }).tap()
@@ -263,4 +265,43 @@ test('на телефоне можно раскрыть карту ошибок,
   await expect(page.locator('.mistake-list')).not.toContainText('ё')
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375)
   await page.close()
+})
+
+test('Dvorak и Colemak меняют физические подсказки, урок и историю', async ({ page }) => {
+  await page.goto('/')
+  const selector = layoutSelect(page)
+  const area = page.getByRole('group', { name: 'Область набора' })
+  await selector.selectOption('dvorak')
+  await expect(area).toBeFocused()
+  await expect(page.locator('[data-position="2-2"]')).toHaveText('O')
+  const lessons = page.locator('details').filter({ hasText: 'Короткие уроки' })
+  await lessons.locator('summary').click()
+  await lessons.getByRole('button', { name: 'Буквы', exact: true }).click()
+  await expect(area).toContainText('aoeuidhtns')
+
+  await page.getByRole('button', { name: 'Свой текст' }).click()
+  await page.getByRole('textbox', { name: 'Текст или код для тренировки' }).fill('o{')
+  await page.getByRole('button', { name: 'Начать тренировку' }).click()
+  await area.dispatchEvent('keydown', { code: 'KeyS', key: 'o' })
+  await expect(page.getByTestId('hint')).toHaveText('Fn 1 + Shift + ⌫')
+  await expect(page.locator('.keycap.target')).toHaveAttribute('data-position', '0-14')
+  await area.dispatchEvent('keydown', { code: 'KeyX', key: 'x' })
+  await area.dispatchEvent('keydown', { code: 'Minus', key: '{', shiftKey: true })
+  await expect(page.locator('[data-mistakes="1"]')).toHaveAttribute('data-position', '0-14')
+  await expect(page.locator('.mistake-list')).toContainText('Fn 1 + Shift + ⌫')
+
+  await page.reload()
+  await expect(selector).toHaveValue('dvorak')
+  const history = page.locator('details').filter({ hasText: 'История тренировок' })
+  await history.locator('summary').click()
+  await expect(history.locator('li')).toHaveCount(1)
+  await selector.selectOption('colemak')
+  await expect(history.locator('li')).toHaveCount(0)
+  await expect(page.locator('[data-position="2-2"]')).toHaveText('R')
+  await lessons.locator('summary').click()
+  await lessons.getByRole('button', { name: 'Буквы', exact: true }).click()
+  await expect(area).toContainText('arstdhneio')
+  await selector.selectOption('en')
+  await expect(history.locator('li')).toHaveCount(0)
+  await expect(page.locator('[data-position="2-2"]')).toHaveText('S')
 })
