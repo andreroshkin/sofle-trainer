@@ -1,5 +1,5 @@
 import type { Position } from './geometry'
-import { browserCode, character, momentaryLayer, normalize, type Language } from './keycodes'
+import { browserCode, character, keyLabel, momentaryLayer, normalize, type Language } from './keycodes'
 import { keyAt, type Keymap } from './vial'
 
 export function effectiveKey(map: Keymap, layer: number, position: Position) {
@@ -17,6 +17,14 @@ export interface Hint {
   layer: number
   key: Position
   shift: boolean
+}
+
+export function hintShortcut(map: Keymap, hint: Hint, language: Language): string {
+  const baseKey = keyLabel(keyAt(map, 0, hint.key), language)
+  if (!hint.layer) return hint.shift ? `Shift + ${baseKey}` : baseKey
+  if (fnKeys(map, hint.layer).length) return `Fn ${hint.layer} + ${hint.shift ? 'Shift + ' : ''}${baseKey}`
+  const layerKey = keyLabel(effectiveKey(map, hint.layer, hint.key), language)
+  return `Слой ${hint.layer} · ${hint.shift ? 'Shift + ' : ''}${layerKey}`
 }
 
 export function findHint(map: Keymap, target: string, language: Language, preferred: number | null): Hint | undefined {

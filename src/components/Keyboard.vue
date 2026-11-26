@@ -6,6 +6,7 @@ import { keyLabel, momentaryLayer, normalize } from '../domain/keycodes'
 import { keyAt } from '../domain/vial'
 
 const trainer = useTrainer()
+const props = defineProps<{ mistakeCounts?: ReadonlyMap<string, number> }>()
 const halves = [
   { hand: 'left', title: 'Левая рука' },
   { hand: 'right', title: 'Правая рука' },
@@ -32,6 +33,7 @@ const keys = computed(() => trainer.map.geometry.positions.map(position => {
     isTransparent, isDisabled,
     isModifier: isHeld || isShift,
     isTarget,
+    mistakes: props.mistakeCounts?.get(position.id),
   }
 }))
 </script>
@@ -46,17 +48,19 @@ const keys = computed(() => trainer.map.geometry.positions.map(position => {
           v-for="key in keys.filter(item => item.hand === half.hand)" :key="key.id"
           class="keycap" :class="{
             target: key.isTarget, modifier: key.isModifier, pressed: trainer.pressed === key.id,
-            transparent: key.isTransparent, disabled: key.isDisabled, fn: key.layerKey !== null,
+            transparent: key.isTransparent, disabled: key.isDisabled, fn: key.layerKey !== null, 'mistake-key': key.mistakes,
           }"
           :style="{
             '--x': key.x, '--y': key.y, '--angle': `${key.angle}deg`,
             '--width': trainer.map.geometry.halfWidth, '--height': trainer.map.geometry.halfHeight,
+            '--mistake-strength': key.mistakes ? `${Math.min(55, 14 + 10 * key.mistakes)}%` : undefined,
           }"
-          :data-position="key.id" :data-keycode="key.code"
-          :title="key.inherited ? `${key.code} · слой 0: ${key.inherited}` : key.code"
+          :data-position="key.id" :data-keycode="key.code" :data-mistakes="key.mistakes"
+          :title="key.mistakes ? `${key.label} · ошибок ${key.mistakes}` : key.inherited ? `${key.code} · слой 0: ${key.inherited}` : key.code"
         >
           <span :class="{ 'key-label-long': key.label.length > 4 }">{{ key.label }}</span>
-          <small v-if="key.physicalLabel || key.inherited">{{ key.physicalLabel || key.inherited }}</small>
+          <small v-if="key.mistakes" :aria-label="`Ошибок ${key.mistakes}`">×{{ key.mistakes > 99 ? '99+' : key.mistakes }}</small>
+          <small v-else-if="key.physicalLabel || key.inherited">{{ key.physicalLabel || key.inherited }}</small>
         </div>
       </div>
     </section>
