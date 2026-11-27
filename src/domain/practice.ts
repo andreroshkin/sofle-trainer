@@ -125,6 +125,30 @@ export function mistakes(keys: readonly KeyStats[]): KeyStats[] {
   return keys.filter(key => key.errors > 0).sort((a, b) => b.errors - a.errors)
 }
 
+interface ErrorTrend {
+  char: string
+  latest: Omit<KeyStats, 'char'>
+  previous: Omit<KeyStats, 'char'>
+}
+
+export function errorTrends(history: readonly Result[]): ErrorTrend[] {
+  const trends = new Map<string, ErrorTrend>()
+  const windowSize = 5
+  for (const [index, session] of history.slice(0, 2 * windowSize).entries()) {
+    for (const key of session.keys) {
+      const trend = trends.get(key.char) ?? {
+        char: key.char, latest: { errors: 0, attempts: 0 }, previous: { errors: 0, attempts: 0 },
+      }
+      const period = index < windowSize ? trend.latest : trend.previous
+      period.errors += key.errors
+      period.attempts += key.attempts
+      trends.set(key.char, trend)
+    }
+  }
+  return [...trends.values()].sort((a, b) =>
+    (b.latest.errors + b.previous.errors) - (a.latest.errors + a.previous.errors) || a.char.localeCompare(b.char, 'ru'))
+}
+
 interface PositionMistakes {
   id: string
   hand: 'left' | 'right'

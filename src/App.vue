@@ -5,7 +5,7 @@ import { useTrainer } from './trainer'
 import { hintShortcut } from './domain/hints'
 import { isTypingLayout, typingLayouts } from './domain/keycodes'
 import { maxFileSize } from './domain/vial'
-import { customTextLimit, normalizeCustomText, reviewMistakes, type Mode } from './domain/practice'
+import { customTextLimit, normalizeCustomText, reviewMistakes, type KeyStats, type Mode } from './domain/practice'
 
 const trainer = useTrainer()
 const fileInput = ref<HTMLInputElement>()
@@ -49,8 +49,15 @@ const timeLabel = computed(() => {
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 })
 const dateFormat = new Intl.DateTimeFormat('ru', { dateStyle: 'short', timeStyle: 'short' })
+const changeFormat = new Intl.NumberFormat('ru', { maximumFractionDigits: 1, signDisplay: 'exceptZero' })
 const formatChar = (char: string) => char === ' ' ? 'Пробел' : char === '\n' ? 'Enter' : char
 const formatSpeed = (wpm: number, elapsed: number) => elapsed >= 1000 ? `${wpm} слов/мин` : '— слов/мин'
+
+function formatErrorChange(latest: Omit<KeyStats, 'char'>, previous: Omit<KeyStats, 'char'>) {
+  if (!latest.attempts || !previous.attempts) return 'Мало данных'
+  const change = 100 * (latest.errors / latest.attempts - previous.errors / previous.attempts)
+  return `${changeFormat.format(change)} п. п.`
+}
 
 function updateViewport(event: MediaQueryListEvent) {
   compact.value = event.matches
@@ -115,6 +122,13 @@ async function practiceMistakes() {
   trainer.repeatKeys(mapped.length ? mapped : trainer.missed)
   await nextTick()
   focusExercise()
+}
+
+async function practiceFromHistory(keys: readonly Pick<KeyStats, 'char'>[]) {
+  trainer.repeatKeys(keys)
+  await nextTick()
+  focusExercise()
+  typeArea.value?.scrollIntoView({ block: 'nearest' })
 }
 
 function openCustomText() {
@@ -374,8 +388,31 @@ onUnmounted(() => {
         <div v-if="trainer.suggested.length" class="recommendation">
           <p>Чаще всего в последних тренировках вызывали ошибки <kbd v-for="key in trainer.suggested" :key="key.char"
               :title="`Ошибок ${key.errors} из ${key.attempts} попыток`">{{ formatChar(key.char) }}</kbd></p>
-          <button type="button" class="button" @click="trainer.repeatKeys(trainer.suggested); resumeTyping(); typeArea?.scrollIntoView({ block: 'nearest' })">Потренировать</button>
+          <button type="button" class="button" @click="practiceFromHistory(trainer.suggested)">Потренировать</button>
         </div>
+        <table v-if="trainer.trends.length" class="error-trends" aria-describedby="error-trends-note">
+          <caption>Динамика ошибок по символам</caption>
+          <thead>
+            <tr>
+              <th scope="col">Символ</th>
+              <th scope="col">Последние 5</th>
+              <th scope="col">Предыдущие 5</th>
+              <th scope="col">Изменение доли ошибок</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="trend in trainer.trends" :key="trend.char">
+              <th scope="row">
+                <button type="button" class="button" :aria-label="`Потренировать символ ${formatChar(trend.char)}`"
+                  @click="practiceFromHistory([trend])">{{ formatChar(trend.char) }}</button>
+              </th>
+              <td>{{ trend.latest.errors }} / {{ trend.latest.attempts }}</td>
+              <td>{{ trend.previous.errors }} / {{ trend.previous.attempts }}</td>
+              <td>{{ formatErrorChange(trend.latest, trend.previous) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-if="trainer.trends.length" id="error-trends-note">Ошибки / попытки за завершённые тренировки. Нажми на символ, чтобы потренировать его.</p>
         <ol class="history-list">
           <li v-for="entry in trainer.recent" :key="entry.id">
             <time :datetime="new Date(entry.finishedAt).toISOString()">{{ dateFormat.format(entry.finishedAt) }}</time>
