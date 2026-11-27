@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
+import { profileFor, type Result } from '../src/domain/practice'
+import { parseVial } from '../src/domain/vial'
 
 const layoutSelect = (page: Page) => page.getByRole('combobox', { name: 'Системная раскладка' })
 
@@ -137,7 +139,7 @@ test('урок слоя, повтор ошибок и история по рас
   const history = page.locator('details').filter({ hasText: 'История тренировок' })
   await history.locator('summary').click()
   await expect(history.locator('li')).toHaveCount(2)
-  await expect(history.getByRole('button', { name: 'Потренировать' })).toBeVisible()
+  await expect(history.getByRole('button', { name: 'Потренировать', exact: true })).toBeVisible()
   await layoutSelect(page).selectOption('en')
   await expect(history.locator('li')).toHaveCount(0)
   await layoutSelect(page).selectOption('ru')
@@ -150,6 +152,66 @@ test('урок слоя, повтор ошибок и история по рас
   await expect(history.locator('li')).toHaveCount(0)
   await page.getByRole('button', { name: 'Вернуть базу' }).click()
   await expect(history.locator('li')).toHaveCount(2)
+})
+
+test('динамика ошибок сравнивает два окна сохранённых сессий текущей раскладки', async ({ page }) => {
+  const profile = profileFor(parseVial(base))
+  const config = JSON.parse(base)
+  config.layout[2][0][0] = 'KC_NO'
+  const otherVial = JSON.stringify(config)
+  const sample = (index: number, keys: Result['keys'], overrides: Partial<Result> = {}): Result => ({
+    id: `session-${index}`, profile, language: 'en', mode: 'custom', finishedAt: index * 1000,
+    accuracy: 80, wpm: 0, elapsed: 0, keys, ...overrides,
+  })
+  const historyData = [
+    sample(1, [{ char: 'z', attempts: 99, errors: 98 }]),
+    ...Array.from({ length: 5 }, (_, index) => sample(index + 2, [
+      { char: 'a', attempts: 4, errors: 2 }, { char: 'b', attempts: 2, errors: 1 },
+      { char: 'e', attempts: 1, errors: 0 },
+    ])),
+    ...Array.from({ length: 5 }, (_, index) => sample(index + 7, [
+      { char: 'a', attempts: 3, errors: 1 }, { char: 'c', attempts: 1, errors: 0 },
+      { char: 'e', attempts: 1, errors: 0 },
+    ], { typingLayout: 'en' })),
+    sample(12, [{ char: 'a', attempts: 8, errors: 7 }], { typingLayout: 'dvorak' }),
+    sample(13, [{ char: 'a', attempts: 6, errors: 5 }], { profile: profileFor(parseVial(otherVial)) }),
+  ]
+  await page.goto('/')
+  await page.evaluate(data => {
+    localStorage.setItem('split-keyboard-trainer.history.v1', JSON.stringify(data))
+    localStorage.setItem('split-keyboard-trainer.typing-layout.v1', 'en')
+  }, historyData)
+  await page.reload()
+
+  await page.locator('summary').filter({ hasText: 'История тренировок' }).click()
+  const trends = page.getByRole('table', { name: 'Динамика ошибок по символам' })
+  const values = (char: string) => trends.getByRole('row').filter({
+    has: page.getByRole('button', { name: `Потренировать символ ${char}`, exact: true }),
+  }).getByRole('cell')
+  await expect(values('a')).toHaveText(['5 / 15', '10 / 20', '-16,7 п. п.'])
+  await expect(values('b')).toHaveText(['0 / 0', '5 / 10', 'Мало данных'])
+  await expect(values('c')).toHaveText(['0 / 5', '0 / 0', 'Мало данных'])
+  await expect(values('e')).toHaveText(['0 / 5', '0 / 5', '0 п. п.'])
+  await expect(values('z')).toHaveCount(0)
+
+  await layoutSelect(page).selectOption('dvorak')
+  await expect(values('a')).toHaveText(['7 / 8', '0 / 0', 'Мало данных'])
+  await expect(values('b')).toHaveCount(0)
+  await layoutSelect(page).selectOption('en')
+  await page.getByLabel('Файл Vial').setInputFiles({
+    name: 'alternate.vil', mimeType: 'application/json', buffer: Buffer.from(otherVial),
+  })
+  await expect(values('a')).toHaveText(['5 / 6', '0 / 0', 'Мало данных'])
+  await page.getByRole('button', { name: 'Вернуть базу' }).click()
+  await expect(values('a')).toHaveText(['5 / 15', '10 / 20', '-16,7 п. п.'])
+
+  await trends.getByRole('button', { name: 'Потренировать символ a', exact: true }).click()
+  const area = page.getByRole('group', { name: 'Область набора' })
+  await expect(area).toBeFocused()
+  await expect(area).toHaveText('a'.repeat(15))
+  await page.keyboard.type('a'.repeat(15))
+  await expect(page.getByRole('status')).toHaveText('✓ Упражнение завершено')
+  await expect(values('a')).toHaveText(['4 / 27', '9 / 19', '-32,6 п. п.'])
 })
 
 test('свой код сохраняет переносы и отступы и использует результат с повтором ошибок', async ({ page }) => {

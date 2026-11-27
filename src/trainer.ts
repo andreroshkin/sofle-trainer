@@ -4,7 +4,7 @@ import baseVial from './assets/base.vil?raw'
 import { eventPosition, findHint, fnKeys } from './domain/hints'
 import { isTypingLayout, layoutLanguage, type TypingLayout } from './domain/keycodes'
 import { parseVial } from './domain/vial'
-import { lessonText, lessons, mistakes, profileFor, readHistory, recordResult, resultLayout, suggestedKeys,
+import { errorTrends, lessonText, lessons, mistakes, profileFor, readHistory, recordResult, resultLayout, suggestedKeys,
   type KeyStats, type Mode, type Result } from './domain/practice'
 
 const storageKey = 'split-keyboard-trainer.vial.v1'
@@ -54,7 +54,10 @@ export const useTrainer = defineStore('trainer', () => {
   let releaseTimer: ReturnType<typeof setTimeout> | undefined
 
   const profile = computed(() => profileFor(map.value))
-  const recent = computed(() => history.value.filter(entry => entry.profile === profile.value && resultLayout(entry) === typingLayout.value))
+  const recent = computed(() => history.value
+    .filter(entry => entry.profile === profile.value && resultLayout(entry) === typingLayout.value)
+    .sort((a, b) => b.finishedAt - a.finishedAt))
+  const trends = computed(() => errorTrends(recent.value))
   const suggested = computed(() => suggestedKeys(recent.value)
     .filter(key => findHint(map.value, key.char, typingLayout.value, null)))
   const availableLessons = computed(() => lessons.filter(lesson => lessonText(lesson.id, map.value, typingLayout.value, 0)))
@@ -133,7 +136,7 @@ export const useTrainer = defineStore('trainer', () => {
     reset()
   }
 
-  function repeatKeys(keys: readonly KeyStats[]) {
+  function repeatKeys(keys: readonly Pick<KeyStats, 'char'>[]) {
     const sample = keys.slice(0, 5).map(key => key.char).join('')
     if (!sample) return
     reviewText.value = sample.repeat(Math.ceil(15 / sample.length))
@@ -249,7 +252,7 @@ export const useTrainer = defineStore('trainer', () => {
   return {
     map, filename, imported, storageWarning, historyWarning, language, typingLayout, mode, cursor, errors, mistake,
     exercise, length: computed(() => chars.value.length), target, done, hint, layer, manualLayer, held, elapsed, wpm, accuracy, progress, pressed,
-    recent, suggested, result, reviewText, availableLessons, missed: computed(() => mistakes(result.value?.keys ?? [])),
+    recent, trends, suggested, result, reviewText, availableLessons, missed: computed(() => mistakes(result.value?.keys ?? [])),
     customText, customActive, startCustom, reset, setTypingLayout, setMode, nextExercise, repeatKeys, tick, flash, type, revert, importMap, restoreBase,
   }
 })
